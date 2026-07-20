@@ -78,6 +78,22 @@ button + button { margin-left: 8px; }
 .checkbox-inline input { width: auto; }
 
 .chip-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.instance-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 12px 10px;
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.03);
+}
+.instance-group-title {
+  font-size: 13px;
+  color: var(--muted);
+  display: block;
+  width: 100%;
+}
 .chip {
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 999px; background: #111a15; color: var(--text);
   font-size: 13px;

@@ -53,29 +53,39 @@ def build_list_roles_sql():
 
 
 def build_user_lookup_sql(username):
+    if isinstance(username, (list, tuple)):
+        names = [f"'{_escape(u)}'" for u in username if u]
+        if not names:
+            return "select username, usertype, priority, defrole from sysusers where 1=0;"
+        return f"select username, usertype, priority, defrole from sysusers where username in ({', '.join(names)}) order by username;"
+
     safe = _escape(username)
     return f"select username, usertype, priority, defrole from sysusers where username = '{safe}';"
 
 
-def build_grant_statements(username, grants, roles):
+def build_grant_statements(usernames, grants, roles):
     """
+    usernames: a single username string or a list of strings
     grants: list of strings from {"connect", "resource", "dba"}
     roles:  list of role names to set as default role, e.g. ["app_role"]
     Returns a list of individual SQL statements, each ending in ';'.
     """
-    safe_user = _escape(username)
+    if isinstance(usernames, str):
+        usernames = [usernames]
     statements = []
 
-    if "connect" in grants:
-        statements.append(f"grant connect to {safe_user};")
-    if "resource" in grants:
-        statements.append(f"grant resource to {safe_user};")
-    if "dba" in grants:
-        statements.append(f"grant dba to {safe_user};")
+    for username in usernames:
+        safe_user = _escape(username)
+        if "connect" in grants:
+            statements.append(f"grant connect to {safe_user};")
+        if "resource" in grants:
+            statements.append(f"grant resource to {safe_user};")
+        if "dba" in grants:
+            statements.append(f"grant dba to {safe_user};")
 
-    for role in roles:
-        safe_role = _escape(role)
-        statements.append(f"grant default role {safe_role} to {safe_user};")
+        for role in roles:
+            safe_role = _escape(role)
+            statements.append(f"grant default role {safe_role} to {safe_user};")
 
     return statements
 

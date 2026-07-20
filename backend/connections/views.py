@@ -355,13 +355,25 @@ class UserLookupView(APIView):
         if not manager or not session.env_script:
             return Response({"detail": "Load an environment first"}, status=status.HTTP_409_CONFLICT)
 
-        sql = dbops.build_user_lookup_sql(username)
+        usernames = [u.strip() for u in username.split(",") if u.strip()]
+        if not usernames:
+            return Response({"detail": "username is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        sql = dbops.build_user_lookup_sql(usernames)
         cmd = dbops.build_silent_env_prefixed_command(session.env_script, f'echo "{sql}" | dbaccess {db_name} -')
         result = manager.run(cmd)
         rows = dbops.parse_pipe_separated(result["stdout"])
+        found_usernames = {row.split()[0] for row in rows if row}
 
         return Response({
-            "found": len(rows) > 0,
+            "results": [
+                {
+                    "username": u,
+                    "found": u in found_usernames,
+                    "raw_stdout": result["stdout"],
+                }
+                for u in usernames
+            ],
             "rows": rows,
             "raw_stdout": result["stdout"],
         })
@@ -372,14 +384,16 @@ class UserLookupView(APIView):
 # ----------------------------------------------------------------------
 class GrantPreviewView(APIView):
     def post(self, request):
-        username = (request.data.get("username") or "").strip()
+        usernames = request.data.get("usernames") or request.data.get("username")
         grants = request.data.get("grants", [])
         roles = request.data.get("roles", [])
 
-        if not username:
+        if isinstance(usernames, str):
+            usernames = [u.strip() for u in usernames.split(",") if u.strip()]
+        if not usernames:
             return Response({"detail": "username is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        statements = dbops.build_grant_statements(username, grants, roles)
+        statements = dbops.build_grant_statements(usernames, grants, roles)
         if not statements:
             return Response({"detail": "No grants or roles selected"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -392,70 +406,114 @@ class GrantPreviewView(APIView):
 class GrantExecuteView(APIView):
     def post(self, request):
         session_id = request.data.get("session_id")
+        db_names = request.data.get("db_names") or []
         db_name = (request.data.get("db_name") or "").strip()
-        username = (request.data.get("username") or "").strip()
+        usernames = request.data.get("usernames") or request.data.get("username")
         grants = request.data.get("grants", [])
         roles = request.data.get("roles", [])
+
+        if isinstance(db_names, str):
+            db_names = [d.strip() for d in db_names.split(",") if d.strip()]
+        if db_name:
+            db_names = [db_name] if not db_names else db_names
+        if isinstance(usernames, str):
+            usernames = [u.strip() for u in usernames.split(",") if u.strip()]
 
         session, manager = _get_owned_session(request, session_id)
         if not session:
             return Response({"detail": "Unknown or inactive session"}, status=status.HTTP_404_NOT_FOUND)
         if not manager or not session.env_script:
             return Response({"detail": "Load an environment first"}, status=status.HTTP_409_CONFLICT)
-        if not db_name or not username:
-            return Response({"detail": "db_name and username are required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not db_names or not usernames:
+            return Response({"detail": "db_names and usernames are required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        statements = dbops.build_grant_statements(username, grants, roles)
+        statements = dbops.build_grant_statements(usernames, grants, roles)
         if not statements:
             return Response({"detail": "No grants or roles selected"}, status=status.HTTP_400_BAD_REQUEST)
-        # Ensure CONNECT grants are executed before any role grants.
-        # Some Informix setups require basic privileges before setting default roles.
+
         connects = [s for s in statements if s.strip().lower().startswith("grant connect")]
         others = [s for s in statements if not s.strip().lower().startswith("grant connect")]
         ordered = connects + others
         sql_block = "\n".join(ordered)
-        cmd = dbops.build_silent_env_prefixed_command(session.env_script, f'echo "{sql_block}" | dbaccess {db_name} -')
-        result = manager.run(cmd)
 
-        ok = result["exit_code"] == 0 and "error" not in result["stdout"].lower() and "error" not in result["stderr"].lower()
+        results = []
+        overall_ok = True
+        for db in db_names:
+            cmd = dbops.build_silent_env_prefixed_command(session.env_script, f'echo "{sql_block}" | dbaccess {db} -')
+            result = manager.run(cmd)
+            ok = result["exit_code"] == 0 and "error" not in result["stdout"].lower() and "error" not in result["stderr"].lower()
+            overall_ok = overall_ok and ok
+            results.append({
+                "db_name": db,
+                "exit_code": result["exit_code"],
+                "stdout": result["stdout"],
+                "stderr": result["stderr"],
+                "ok": ok,
+            })
 
         AuditLog.objects.create(
             session=session, portal_user=request.user, action="grant_execute",
-            detail=f"db={db_name} user={username} grants={grants} roles={roles}",
+            detail=f"db_names={db_names} users={usernames} grants={grants} roles={roles}",
             executed_sql=sql_block,
-            result_summary=(result["stdout"] + result["stderr"])[:4000],
-            status="success" if ok else "failed",
+            result_summary=("\n".join([r["stdout"] + r["stderr"] for r in results]))[:4000],
+            status="success" if overall_ok else "failed",
         )
 
         payload = {
-            "status": "executed" if ok else "error",
+            "status": "executed" if overall_ok else "error",
             "executed_sql": sql_block,
-            "stdout": result["stdout"],
-            "stderr": result["stderr"],
+            "results": results,
         }
-        return Response(payload, status=status.HTTP_200_OK if ok else status.HTTP_400_BAD_REQUEST)
+        return Response(payload, status=status.HTTP_200_OK if overall_ok else status.HTTP_400_BAD_REQUEST)
 
 
 # ----------------------------------------------------------------------
 # Step 14: re-query sysusers to confirm the grant actually stuck
 # ----------------------------------------------------------------------
 class GrantVerifyView(APIView):
-    def get(self, request, db_name, username):
+    def get(self, request, db_name=None, username=None):
         session_id = request.query_params.get("session_id")
+        db_names = request.query_params.get("db_names")
+        usernames = request.query_params.get("usernames")
+
         session, manager = _get_owned_session(request, session_id)
         if not session:
             return Response({"detail": "Unknown or inactive session"}, status=status.HTTP_404_NOT_FOUND)
         if not manager or not session.env_script:
             return Response({"detail": "Load an environment first"}, status=status.HTTP_409_CONFLICT)
 
-        sql = dbops.build_user_lookup_sql(username)
-        cmd = dbops.build_silent_env_prefixed_command(session.env_script, f'echo "{sql}" | dbaccess {db_name} -')
-        result = manager.run(cmd)
-        rows = dbops.parse_pipe_separated(result["stdout"])
+        if db_name and username:
+            db_names = db_names or db_name
+            usernames = usernames or username
+        if isinstance(db_names, str):
+            db_names = [d.strip() for d in db_names.split(",") if d.strip()]
+        if isinstance(usernames, str):
+            usernames = [u.strip() for u in usernames.split(",") if u.strip()]
 
-        AuditLog.objects.create(
-            session=session, portal_user=request.user, action="grant_verify",
-            detail=f"db={db_name} user={username}", result_summary=result["stdout"][:2000],
-        )
+        if not db_names or not usernames:
+            return Response({"detail": "db_names and usernames are required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"rows": rows, "raw_stdout": result["stdout"]})
+        results = []
+        combined_stdout = []
+        for db in db_names:
+            sql = dbops.build_user_lookup_sql(usernames)
+            cmd = dbops.build_silent_env_prefixed_command(session.env_script, f'echo "{sql}" | dbaccess {db} -')
+            result = manager.run(cmd)
+            rows = dbops.parse_pipe_separated(result["stdout"])
+            combined_stdout.append(result["stdout"])
+            results.append({
+                "db_name": db,
+                "usernames": usernames,
+                "rows": rows,
+                "stdout": result["stdout"],
+                "stderr": result["stderr"],
+            })
+            AuditLog.objects.create(
+                session=session, portal_user=request.user, action="grant_verify",
+                detail=f"db={db} users={usernames}", result_summary=result["stdout"][:2000],
+            )
+
+        return Response({
+            "results": results,
+            "raw_stdout": "\n---\n".join(combined_stdout),
+        })

@@ -108,10 +108,11 @@ this is different per instance, there's no fixed default. Example: <code>. /mcp_
         <div id="env-table-wrap" style="margin-bottom:8px; display:block;">
           <table id="env-table" style="width:100%; border-collapse:collapse; font-size:13px;">
             <thead>
-              <tr style="text-align:left; color:var(--muted); font-size:12px;"><th style="padding:6px 8px; border-bottom:1px solid var(--line); width:65%;">Environment</th><th style="padding:6px 8px; border-bottom:1px solid var(--line); width:35%;">Port</th></tr>
+              <tr style="text-align:left; color:var(--muted); font-size:12px;"><th style="padding:6px 8px; border-bottom:1px solid var(--line); width:55%;">Environment</th><th style="padding:6px 8px; border-bottom:1px solid var(--line); width:25%;">Port</th><th style="padding:6px 8px; border-bottom:1px solid var(--line); width:20%; text-align:center;">Select</th></tr>
             </thead>
             <tbody></tbody>
           </table>
+        <div id="env-selected-info" class="hint" style="margin-top:8px; display:none;"></div>
         </div>
         <datalist id="env-history"></datalist>
       </div>
@@ -162,9 +163,10 @@ this is different per instance, there's no fixed default. Example: <code>. /mcp_
     </div>
     <div class="section-body">
       <div class="field">
-        <label for="target-user">Username</label>
-        <input id="target-user" type="text" placeholder="akhalid06">
+        <label for="target-user">Username(s)</label>
+        <input id="target-user" type="text" placeholder="akhalid06, jdoe, smith01">
       </div>
+      <p class="hint">Enter one or more usernames separated by commas. Lookup will query the active database only; grants can then apply to every selected database.</p>
       <button id="btn-lookup-user" class="ghost">Look up</button>
       <span id="user-raw-toggle" class="raw-toggle" style="display:none; margin-top:14px;">show raw output</span>
       <pre id="user-raw" class="out"></pre>
@@ -210,8 +212,10 @@ this is different per instance, there's no fixed default. Example: <code>. /mcp_
     <div class="section-body">
       <p class="hint">Re-runs the <code>sysusers</code> lookup for this user to confirm the grant stuck.</p>
       <button id="btn-verify" class="ghost">Verify</button>
+      <button id="btn-show-exec-logs" class="ghost" style="display:none; margin-left:8px;">Show execution logs</button>
       <span id="verify-raw-toggle" class="raw-toggle" style="display:none; margin-top:14px;">show raw output</span>
       <pre id="verify-raw" class="out"></pre>
+      <pre id="execute-log" class="out"></pre>
       <div id="status-verify" class="status"></div>
     </div>
   </section>
@@ -323,9 +327,12 @@ function resetToEnvironmentLoad(){
   auditSaved = false;
   selectedDb = null;
   selectedDbs = [];
+  executeLogs = [];
   document.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
   document.querySelectorAll('.status.show').forEach(s => s.className = 'status');
   document.querySelectorAll('.out.open').forEach(o => o.classList.remove('open'));
+  $("execute-log").textContent = "";
+  renderExecuteLogButton();
   $("role-db-name").textContent = "—";
   $("db-selected-info").style.display = "none";
 }
@@ -364,13 +371,31 @@ async function refreshEnvList(){
     (data.envs || []).forEach(e => {
       const tr = document.createElement('tr');
       tr.style.cursor = 'pointer';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'env-select';
+      checkbox.dataset.name = e.name;
+      checkbox.checked = selectedEnvScripts.includes(e.name);
+      checkbox.addEventListener('change', () => {
+        toggleEnvSelection(e.name);
+      });
+
       tr.innerHTML = `<td style="padding:8px 6px; border-bottom:1px solid var(--line);">${e.name}</td><td style="padding:8px 6px; border-bottom:1px solid var(--line);">${e.port || '—'}</td>`;
-      tr.addEventListener('click', () => {
-        $("env-script").value = `. /${e.name}`;
-        $("env-script").focus();
+      const tdSelect = document.createElement('td');
+      tdSelect.style.padding = '8px 6px';
+      tdSelect.style.borderBottom = '1px solid var(--line)';
+      tdSelect.style.textAlign = 'center';
+      tdSelect.appendChild(checkbox);
+      tr.appendChild(tdSelect);
+
+      tr.addEventListener('click', (evt) => {
+        if (evt.target === checkbox) return;
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event('change'));
       });
       tbody.appendChild(tr);
     });
+    updateEnvSelectionInfo();
   } catch (err) {
     // ignore UI errors for env list
   } finally {
@@ -417,6 +442,106 @@ function selectedChips(containerId){
   return [...document.querySelectorAll(`#${containerId} .chip.selected`)].map(c => c.dataset.value);
 }
 
+function renderEnvDbGroups(groups) {
+  const container = $("db-list");
+  container.innerHTML = "";
+  if (!groups.length) {
+    container.innerHTML = `<div class="chip-empty">No database groups loaded.</div>`;
+    return;
+  }
+
+  groups.forEach(({ env, dbs }) => {
+    const section = document.createElement("div");
+    section.className = "instance-group";
+
+    const title = document.createElement("div");
+    title.className = "instance-group-title";
+    title.textContent = `Instance: ${env}`;
+    section.appendChild(title);
+
+    const group = document.createElement("div");
+    group.className = "chip-grid";
+    dbs.forEach(dbName => {
+      const chip = document.createElement("div");
+      chip.className = "chip";
+      chip.textContent = dbName;
+      chip.dataset.value = dbName;
+      chip.addEventListener("click", () => {
+        const isSelected = chip.classList.toggle("selected");
+        setDbSelection(env, dbName, isSelected);
+      });
+      group.appendChild(chip);
+    });
+    section.appendChild(group);
+    container.appendChild(section);
+  });
+}
+
+function renderEnvRoleGroups(groups) {
+  const container = $("role-list");
+  container.innerHTML = "";
+  if (!groups.length) {
+    container.innerHTML = `<div class="chip-empty">No role groups loaded.</div>`;
+    return;
+  }
+
+  groups.forEach(({ env, db, roles }) => {
+    const section = document.createElement("div");
+    section.className = "instance-group";
+
+    const title = document.createElement("div");
+    title.className = "instance-group-title";
+    title.textContent = `Instance: ${env} · Database: ${db}`;
+    section.appendChild(title);
+
+    const group = document.createElement("div");
+    group.className = "chip-grid";
+    roles.forEach(roleName => {
+      const chip = document.createElement("div");
+      chip.className = "chip";
+      chip.textContent = roleName;
+      chip.dataset.value = roleName;
+      group.appendChild(chip);
+    });
+    section.appendChild(group);
+    container.appendChild(section);
+  });
+}
+
+function renderGrantRoleGroups(groups) {
+  const container = $("grant-roles");
+  container.innerHTML = "";
+  if (!groups.length) {
+    container.innerHTML = `<div class="chip-empty">No grant roles loaded.</div>`;
+    return;
+  }
+
+  groups.forEach(({ env, db, roles }) => {
+    const section = document.createElement("div");
+    section.className = "instance-group";
+
+    const title = document.createElement("div");
+    title.className = "instance-group-title";
+    title.textContent = `Instance: ${env} · Database: ${db}`;
+    section.appendChild(title);
+
+    const group = document.createElement("div");
+    group.className = "chip-grid";
+    roles.forEach(roleName => {
+      const chip = document.createElement("div");
+      chip.className = "chip";
+      chip.textContent = roleName;
+      chip.dataset.value = roleName;
+      chip.addEventListener("click", () => {
+        chip.classList.toggle("selected");
+      });
+      group.appendChild(chip);
+    });
+    section.appendChild(group);
+    container.appendChild(section);
+  });
+}
+
 async function api(path, opts = {}){
   const res = await fetch(`${API_BASE}${path}`, {
     ...opts,
@@ -460,7 +585,128 @@ function setSessionExpiredState() {
 
 let selectedDb = null;
 let selectedDbs = [];
+let selectedDbsByEnv = {};
+let selectedEnvScripts = [];
 let auditSaved = false;
+let executeLogs = [];
+
+function updateEnvSelectionInfo() {
+  const info = $("env-selected-info");
+  if (!info) return;
+  if (!selectedEnvScripts.length) {
+    info.style.display = "none";
+    return;
+  }
+  info.style.display = "block";
+  info.textContent = `Selected ${selectedEnvScripts.length} instance${selectedEnvScripts.length === 1 ? "" : "s"} for execution.`;
+}
+
+function getSelectedDbs() {
+  return Object.values(selectedDbsByEnv).flat();
+}
+
+function updateDbSelectionInfo() {
+  const info = $("db-selected-info");
+  const selected = getSelectedDbs();
+  if (!info) return;
+  if (!selected.length) {
+    info.style.display = "none";
+    return;
+  }
+  info.style.display = "block";
+  info.textContent = `Selected ${selected.length} database${selected.length === 1 ? "" : "s"}; active: ${selectedDb || selected[selected.length - 1]}.`;
+}
+
+function getSelectedDbForLookup() {
+  return selectedDb || getSelectedDbs()[0] || null;
+}
+
+function ensureEnvDbSet(env) {
+  if (!selectedDbsByEnv[env]) selectedDbsByEnv[env] = [];
+}
+
+function setDbSelection(env, db, selected) {
+  ensureEnvDbSet(env);
+  const set = new Set(selectedDbsByEnv[env]);
+  if (selected) {
+    set.add(db);
+    selectedDb = db;
+  } else {
+    set.delete(db);
+    if (selectedDb === db) {
+      selectedDb = getSelectedDbs().slice(-1)[0] || null;
+    }
+  }
+  selectedDbsByEnv[env] = [...set];
+  updateDbSelectionInfo();
+}
+
+function toggleEnvSelection(envName) {
+  const index = selectedEnvScripts.indexOf(envName);
+  if (index === -1) {
+    selectedEnvScripts.push(envName);
+    $("env-script").value = `. /${envName}`;
+  } else {
+    selectedEnvScripts.splice(index, 1);
+  }
+  updateEnvSelectionInfo();
+}
+
+function getEnvSelections() {
+  return selectedEnvScripts.slice();
+}
+
+function formatExecutionLogs() {
+  if (!executeLogs.length) return "(no execution logs)";
+  return executeLogs.map(entry => {
+    const heading = `-- ${entry.env_script} · ${entry.status.toUpperCase()}${entry.message ? ` (${entry.message})` : ""}`;
+    const bodyLines = (entry.results || []).map(r => {
+      if (typeof r === "string") return r;
+      if (r.raw_stdout) return r.raw_stdout;
+      if (r.message) return r.message;
+      return JSON.stringify(r);
+    }).filter(Boolean);
+    return [heading, ...bodyLines].join("\n");
+  }).join("\n\n");
+}
+
+function renderExecuteLogButton() {
+  const btn = $("btn-show-exec-logs");
+  if (!btn) return;
+  if (!executeLogs.length) {
+    btn.style.display = "none";
+    return;
+  }
+  btn.style.display = "inline-block";
+  btn.textContent = $("execute-log").classList.contains("open") ? "Hide execution logs" : "Show execution logs";
+}
+
+function updateExecuteLogDisplay() {
+  const pre = $("execute-log");
+  if (!pre) return;
+  pre.textContent = formatExecutionLogs();
+  renderExecuteLogButton();
+}
+
+function clearExecuteLogs() {
+  executeLogs = [];
+  const pre = $("execute-log");
+  if (pre) pre.classList.remove("open");
+  renderExecuteLogButton();
+}
+
+function clearEnvSelections() {
+  selectedEnvScripts = [];
+  document.querySelectorAll("#env-table input.env-select").forEach(chk => chk.checked = false);
+  updateEnvSelectionInfo();
+}
+
+function parseNames(value) {
+  return value
+    .split(/[,;]+/) 
+    .map(v => v.trim())
+    .filter(Boolean);
+}
 
 // ---- Remember environment scripts the user has actually typed, per browser ----
 const ENV_HISTORY_KEY = "gp_env_history";
@@ -520,6 +766,15 @@ document.addEventListener('DOMContentLoaded', () => {
 refreshEnvList();
 $("btn-refresh-env").addEventListener("click", refreshEnvList);
 $("audit-toggle-link").addEventListener("click", () => toggleSection("sec-audit"));
+const execLogToggle = $("btn-show-exec-logs");
+if (execLogToggle) {
+  execLogToggle.addEventListener("click", () => {
+    const pre = $("execute-log");
+    if (!pre) return;
+    const isOpen = pre.classList.toggle("open");
+    execLogToggle.textContent = isOpen ? "Hide execution logs" : "Show execution logs";
+  });
+}
 function wireSectionToggle(sectionId, buttonId) {
   const section = $(sectionId);
   const button = $(buttonId);
@@ -639,28 +894,36 @@ $("btn-load-env").addEventListener("click", async () => {
 $("btn-load-db").addEventListener("click", async () => {
   const btn = $("btn-load-db");
   btn.disabled = true;
-  setStatus("status-db", "pending", "Querying sysdatabases…");
+  setStatus("status-db", "pending", "Querying sysdatabases for selected instances…");
   try {
     const includeSystem = $("chk-include-system").checked;
-    const data = await api(`/databases/?session_id=${sessionId}&include_system=${includeSystem}`);
-    const dbs = data.databases || [];
-    selectedDbs = [];
-    renderChips("db-list", dbs, "multi", (sel) => {
-      selectedDbs = sel;
-      selectedDb = sel[sel.length - 1] || null;
-      $("role-db-name").textContent = selectedDb || "—";
-      if (!selectedDbs.length) {
-        $("db-selected-info").style.display = "none";
-        return;
-      }
-      $("db-selected-info").style.display = "block";
-      $("db-selected-info").textContent = `Selected ${selectedDbs.length} database${selectedDbs.length === 1 ? "" : "s"}; active: ${selectedDb}.`;
-      markPillDone("db");
-      activatePill("role");
-      openProgressSection("sec-role");
-    });
-    showRawToggle("db-raw-toggle", "db-raw", data.raw_stdout);
-    setStatus("status-db", "ok", `Found ${dbs.length} database${dbs.length === 1 ? "" : "s"}. Select one or more to continue.`);
+    selectedDbsByEnv = {};
+    const instances = getEnvSelections();
+    if (!instances.length) {
+      setStatus("status-db", "err", "Select one or more instances in the environment table first.");
+      return;
+    }
+
+    const allDbs = [];
+    for (const envScript of instances) {
+      setStatus("status-db", "pending", `Loading ${envScript} and querying databases…`);
+      await api("/environment/load/", {
+        method: "POST",
+        body: JSON.stringify({ session_id: sessionId, env_script: `. /${envScript}` })
+      });
+      const data = await api(`/databases/?session_id=${sessionId}&include_system=${includeSystem}`);
+      const dbs = data.databases || [];
+      selectedDbsByEnv[envScript] = [];
+      allDbs.push({ env: envScript, dbs, raw_stdout: data.raw_stdout });
+    }
+
+    renderEnvDbGroups(allDbs);
+    updateDbSelectionInfo();
+    showRawToggle("db-raw-toggle", "db-raw", allDbs.map(a => `-- ${a.env} --\n${a.raw_stdout}`).join("\n"));
+    setStatus("status-db", "ok", `Loaded databases for ${instances.length} instance${instances.length === 1 ? "" : "s"}. Select databases per instance to continue.`);
+    markPillDone("db");
+    activatePill("role");
+    openProgressSection("sec-role");
   } catch (err) {
     setStatus("status-db", "err", err.message);
   } finally {
@@ -671,21 +934,41 @@ $("chk-include-system").addEventListener("change", () => $("btn-load-db").click(
 
 // ---- List roles ----
 $("btn-load-roles").addEventListener("click", async () => {
+  const selectedDbs = getSelectedDbs();
   if (!selectedDbs.length) { setStatus("status-role", "err", "Select at least one database first"); return; }
+  const instances = Object.keys(selectedDbsByEnv).filter(env => selectedDbsByEnv[env].length);
+  if (!instances.length) { setStatus("status-role", "err", "Select at least one database first."); return; }
+
   const btn = $("btn-load-roles");
   btn.disabled = true;
-  setStatus("status-role", "pending", "Querying sysroles…");
+  setStatus("status-role", "pending", "Querying sysroles for selected instances…");
   try {
-    const data = await api(`/databases/${selectedDb}/roles/?session_id=${sessionId}`);
-    const roles = data.roles || [];
-    renderChips("role-list", roles, "multi", () => {});
-    showRawToggle("role-raw-toggle", "role-raw", data.raw_stdout);
-    setStatus("status-role", "ok", `Found ${roles.length} role${roles.length === 1 ? "" : "s"}.`);
+    const groups = [];
+    const allRoles = new Set();
+    let rawParts = [];
+
+    for (const envScript of instances) {
+      setStatus("status-role", "pending", `Loading ${envScript} and querying roles…`);
+      await api("/environment/load/", {
+        method: "POST",
+        body: JSON.stringify({ session_id: sessionId, env_script: `. /${envScript}` })
+      });
+      for (const dbName of selectedDbsByEnv[envScript]) {
+        const data = await api(`/databases/${encodeURIComponent(dbName)}/roles/?session_id=${sessionId}`);
+        const roles = data.roles || [];
+        roles.forEach(r => allRoles.add(r));
+        groups.push({ env: envScript, db: dbName, roles, raw_stdout: data.raw_stdout });
+        rawParts.push(`-- ${envScript} / ${dbName} --\n${data.raw_stdout}`);
+      }
+    }
+
+    renderEnvRoleGroups(groups);
+    renderGrantRoleGroups(groups);
+    showRawToggle("role-raw-toggle", "role-raw", rawParts.join("\n"));
+    setStatus("status-role", "ok", `Loaded roles for ${groups.length} selected db${groups.length === 1 ? "" : "s"}.`);
     markPillDone("role");
     activatePill("user");
     openProgressSection("sec-user");
-
-    renderChips("grant-roles", roles, "multi", () => {});
   } catch (err) {
     setStatus("status-role", "err", err.message);
   } finally {
@@ -695,18 +978,26 @@ $("btn-load-roles").addEventListener("click", async () => {
 
 // ---- User lookup ----
 $("btn-lookup-user").addEventListener("click", async () => {
-  const username = $("target-user").value.trim();
-  if (!username) { setStatus("status-user", "err", "Enter a username"); return; }
-  if (!selectedDb) { setStatus("status-user", "err", "Select a database first"); return; }
+  const usernames = parseNames($("target-user").value);
+  if (!usernames.length) { setStatus("status-user", "err", "Enter one or more usernames"); return; }
+  const lookupDb = getSelectedDbForLookup();
+  if (!lookupDb) { setStatus("status-user", "err", "Select a database first"); return; }
 
   const btn = $("btn-lookup-user");
   btn.disabled = true;
-  setStatus("status-user", "pending", "Checking sysusers…");
+  setStatus("status-user", "pending", `Checking ${usernames.length} user${usernames.length === 1 ? "" : "s"} on ${selectedDb}…`);
   try {
-    const data = await api(`/databases/${selectedDb}/users/${username}/?session_id=${sessionId}`);
+    const lookupDb = getSelectedDbForLookup();
+    const data = await api(`/databases/${encodeURIComponent(lookupDb)}/users/${encodeURIComponent(usernames.join(","))}/?session_id=${sessionId}`);
     showRawToggle("user-raw-toggle", "user-raw", data.raw_stdout || "(no rows found)");
-    setStatus("status-user", data.found ? "ok" : "pending",
-      data.found ? "User found — expand raw output above for the current record." : "No existing record — grant will apply to a new user.");
+    const foundCount = data.results ? data.results.filter(r => r.found).length : (data.found ? 1 : 0);
+    if (data.results) {
+      setStatus("status-user", foundCount ? "ok" : "pending",
+        `${foundCount} of ${usernames.length} user${usernames.length === 1 ? "" : "s"} found — expand raw output above for details.`);
+    } else {
+      setStatus("status-user", data.found ? "ok" : "pending",
+        data.found ? "User found — expand raw output above for the current record." : "No existing record — grant will apply to a new user.");
+    }
     markPillDone("user");
     activatePill("grant");
     openProgressSection("sec-grant");
@@ -724,12 +1015,13 @@ document.querySelectorAll(".chip.grant-check").forEach(chip => {
 
 // ---- Preview grant SQL ----
 $("btn-preview").addEventListener("click", async () => {
-  const username = $("target-user").value.trim();
-  const grants = [...document.querySelectorAll(".chip.grant-check.selected")].map(c => c.dataset.value);
-  const roles = selectedChips("grant-roles");
+  const usernames = parseNames($("target-user").value);
+  const grants = [...new Set([...document.querySelectorAll(".chip.grant-check.selected")].map(c => c.dataset.value))];
+  const roles = [...new Set(selectedChips("grant-roles"))];
 
   if (!auditSaved) { setStatus("status-grant", "err", "Save the audit request before previewing grants."); return; }
-  if (!username) { setStatus("status-grant", "err", "Enter a username in the previous step"); return; }
+  if (!usernames.length) { setStatus("status-grant", "err", "Enter one or more usernames in the previous step"); return; }
+  if (!getSelectedDbs().length) { setStatus("status-grant", "err", "Select at least one database first."); return; }
   if (!grants.length && !roles.length) { setStatus("status-grant", "err", "Select at least one grant or role"); return; }
 
   const btn = $("btn-preview");
@@ -738,10 +1030,11 @@ $("btn-preview").addEventListener("click", async () => {
   try {
     const data = await api("/grants/preview/", {
       method: "POST",
-      body: JSON.stringify({ username, grants, roles })
+      body: JSON.stringify({ usernames, grants, roles })
     });
     $("preview-sql").textContent = data.statements.join("\n");
-    setStatus("status-grant", "ok", "Preview ready below.");
+    const selectedDbs = getSelectedDbs();
+    setStatus("status-grant", "ok", `Preview ready for ${usernames.length} user${usernames.length === 1 ? "" : "s"} across ${selectedDbs.length} database${selectedDbs.length === 1 ? "" : "s"}.`);
     markPillDone("grant");
     activatePill("preview");
     openProgressSection("sec-preview");
@@ -754,25 +1047,70 @@ $("btn-preview").addEventListener("click", async () => {
 
 // ---- Execute grant ----
 $("btn-execute").addEventListener("click", async () => {
-  const username = $("target-user").value.trim();
-  const grants = [...document.querySelectorAll(".chip.grant-check.selected")].map(c => c.dataset.value);
-  const roles = selectedChips("grant-roles");
+  const usernames = parseNames($("target-user").value);
+  const grants = [...new Set([...document.querySelectorAll(".chip.grant-check.selected")].map(c => c.dataset.value))];
+  const roles = [...new Set(selectedChips("grant-roles"))];
 
   if (!auditSaved) { setStatus("status-preview", "err", "Save the audit request before executing grants."); return; }
+  if (!usernames.length) { setStatus("status-preview", "err", "Enter one or more usernames."); return; }
+
+  const instances = getEnvSelections();
+  if (!instances.length) { setStatus("status-preview", "err", "Select one or more instances in the environment table first."); return; }
+
   const btn = $("btn-execute");
   btn.disabled = true;
-  setStatus("status-preview", "pending", "Executing against dbaccess…");
+  const overallResults = [];
+  let anySuccess = false;
   try {
-    const data = await api("/grants/execute/", {
-      method: "POST",
-      body: JSON.stringify({ session_id: sessionId, db_name: selectedDb, username, grants, roles })
-    });
-    setStatus("status-preview", "ok", `Executed.\n${data.stdout || ""}`);
-    markPillDone("preview");
-    activatePill("verify");
-    openProgressSection("sec-verify");
-  } catch (err) {
-    setStatus("status-preview", "err", err.message);
+    for (const envScript of instances) {
+      const dbNames = selectedDbsByEnv[envScript] || [];
+      if (!dbNames.length) {
+        overallResults.push({ env_script: envScript, status: "skipped", message: "No databases selected for this instance" });
+        continue;
+      }
+
+      try {
+        setStatus("status-preview", "pending", `Loading ${envScript}…`);
+        await api("/environment/load/", {
+          method: "POST",
+          body: JSON.stringify({ session_id: sessionId, env_script: `. /${envScript}` })
+        });
+      } catch (err) {
+        overallResults.push({ env_script: envScript, status: "error", message: `Load failed: ${err.message}` });
+        continue;
+      }
+
+      try {
+        setStatus("status-preview", "pending", `Executing grants on ${envScript}…`);
+        const data = await api("/grants/execute/", {
+          method: "POST",
+          body: JSON.stringify({ session_id: sessionId, db_names: dbNames, usernames, grants, roles })
+        });
+        overallResults.push({ env_script: envScript, status: data.status, results: data.results || [] });
+        if (data.status === "executed") anySuccess = true;
+      } catch (err) {
+        overallResults.push({ env_script: envScript, status: "error", message: err.message });
+      }
+    }
+
+    const summary = overallResults.map(r => `${r.env_script}: ${r.status}${r.message ? ` (${r.message})` : ""}`).join(" | ");
+    const failures = overallResults.filter(r => r.status === "error");
+    const failureDetails = failures.map(r => `${r.env_script}: ${r.message}`).join("; ");
+    const totalDbs = getSelectedDbs().length;
+    const successful = overallResults.filter(r => r.status === "executed").length;
+    const failed = failures.length;
+    const skipped = overallResults.filter(r => r.status === "skipped").length;
+    const statusKind = successful ? "ok" : "err";
+    const summaryText = `Processed ${instances.length} instance${instances.length === 1 ? "" : "s"}: ${successful} succeeded, ${failed} failed, ${skipped} skipped across ${totalDbs} database${totalDbs === 1 ? "" : "s"}.`;
+    setStatus("status-preview", statusKind, `${summaryText} ${summary}${failureDetails ? ` Failed instances: ${failureDetails}` : ""}`);
+    executeLogs = overallResults;
+    updateExecuteLogDisplay();
+
+    if (successful) {
+      markPillDone("preview");
+      activatePill("verify");
+      openProgressSection("sec-verify");
+    }
   } finally {
     btn.disabled = false;
   }
@@ -780,16 +1118,19 @@ $("btn-execute").addEventListener("click", async () => {
 
 // ---- Verify ----
 $("btn-verify").addEventListener("click", async () => {
-  const username = $("target-user").value.trim();
-  if (!username || !selectedDb) { setStatus("status-verify", "err", "Missing username or database"); return; }
+  const usernames = parseNames($("target-user").value);
+  if (!usernames.length) { setStatus("status-verify", "err", "Enter one or more usernames."); return; }
+  if (!getSelectedDbs().length) { setStatus("status-verify", "err", "Select at least one database first."); return; }
 
   const btn = $("btn-verify");
   btn.disabled = true;
-  setStatus("status-verify", "pending", "Re-querying sysusers…");
+  setStatus("status-verify", "pending", "Re-querying sysusers across selected databases…");
   try {
-    const data = await api(`/grants/verify/${selectedDb}/${username}/?session_id=${sessionId}`);
-    showRawToggle("verify-raw-toggle", "verify-raw", data.raw_stdout || "(no rows found)");
-    setStatus("status-verify", "ok", "Verification complete — expand raw output above and compare against the grant you executed.");
+    const selectedDbs = getSelectedDbs();
+    const params = new URLSearchParams({ session_id: sessionId, db_names: selectedDbs.join(","), usernames: usernames.join(",") });
+    const data = await api(`/grants/verify/?${params.toString()}`);
+    showRawToggle("verify-raw-toggle", "verify-raw", data.raw_stdout || data.results?.map(r => `${r.db_name}/${r.username}: ${r.raw_stdout}`).join("\n---\n") || "(no rows found)");
+    setStatus("status-verify", "ok", `Verification complete for ${usernames.length} user${usernames.length === 1 ? "" : "s"} across ${selectedDbs.length} database${selectedDbs.length === 1 ? "" : "s"}.`);
     markPillDone("verify");
     setTimeout(resetToEnvironmentLoad, 3600);
   } catch (err) {

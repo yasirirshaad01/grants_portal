@@ -32,4 +32,5 @@ urlpatterns = [
     path("grants/preview/", GrantPreviewView.as_view(), name="grant-preview"),
     path("grants/execute/", GrantExecuteView.as_view(), name="grant-execute"),
     path("grants/verify/<str:db_name>/<str:username>/", GrantVerifyView.as_view(), name="grant-verify"),
+    path("grants/verify/", GrantVerifyView.as_view(), name="grant-verify-multi"),
 ]
