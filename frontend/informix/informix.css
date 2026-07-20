@@ -60,13 +60,16 @@ section.section-hidden .section-header { margin-bottom: 0; }
 .section-body { display: flex; flex-direction: column; gap: 12px; }
 .hint, .sub { color: var(--muted); font-size: 13px; line-height: 1.6; }
 
-.field { display: flex; flex-direction: column; gap: 6px; max-width: 480px; }
-label { font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.08em; }
+.field { display: flex; flex-direction: column; gap: 6px; max-width: 480px; width: 100%; min-width: 0; }
+label { display: block; margin-bottom: 4px; font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.08em; white-space: normal; }
 input, select, textarea {
-  width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #0d1610; color: var(--text);
+  width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: #0d1610; color: var(--text);
   font-family: var(--mono); font-size: 14px; padding: 10px 12px; outline: none;
 }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+
+.hop-panel .field { max-width: 100%; }
+.hop-panel .field label { font-size: 12px; }
 
 button {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
