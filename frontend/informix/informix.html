@@ -12,15 +12,17 @@
   <div class="topbar">
     <div>Session <b id="hdr-session">—</b> on <b id="hdr-host">—</b></div>
     <div class="topbar-actions">
-      <a id="hop-toggle-link">hop to another server</a>
-      <a id="reconnect-link">reconnect via jump server</a>
-      <a id="disconnect-link" class="danger">disconnect</a>
+      <button id="audit-toggle-link" class="small ghost">Audit request</button>
+      <button id="hop-toggle-link" class="small ghost" type="button">hop to another server</button>
+      <button id="reconnect-link" class="small ghost" type="button">reconnect via jump server</button>
+      <button id="disconnect-link" class="small danger" type="button">disconnect</button>
     </div>
   </div>
 
-  <section id="sec-audit" class="open">
+  <section id="sec-audit" class="section-hidden">
     <div class="section-header">
       <h2><span class="n">0</span>Audit request</h2>
+      <button id="btn-toggle-audit" class="small ghost">Hide</button>
     </div>
     <div class="section-body">
       <p class="hint">Record the granter and ticket for audit before performing grants. Date/time is captured automatically.</p>
@@ -238,7 +240,7 @@ $("hdr-host").textContent = sessionStorage.getItem("gp_current_host") || "—";
 $("disconnect-link").addEventListener("click", async () => {
   if (sessionExpired) {
     sessionStorage.removeItem("gp_session_id");
-    window.location.href = "../index.html";
+    window.location.href = "/index.html";
     return;
   }
 
@@ -248,11 +250,11 @@ $("disconnect-link").addEventListener("click", async () => {
     body: JSON.stringify({ session_id: sessionId })
   }).catch(() => {});
   sessionStorage.clear();
-  window.location.href = "index.html";
+  window.location.href = "/index.html";
 });
 
 $("reconnect-link").addEventListener("click", () => {
-  window.location.href = "../index.html";
+  window.location.href = "/index.html?next=informix/informix.html";
 });
 
 function setStatus(id, kind, text){
@@ -264,6 +266,8 @@ function markPillDone(name){
   const target = document.querySelector(`.step-pill[data-pill="${name}"]`);
   if (target) target.classList.add("done");
 }
+const FLOW_SECTIONS = ["sec-env", "sec-db", "sec-role", "sec-user", "sec-grant", "sec-preview", "sec-verify"];
+const sectionToggleButtons = {};
 function markPillNotDone(name){
   const target = document.querySelector(`.step-pill[data-pill="${name}"]`);
   if (target) target.classList.remove("done");
@@ -273,8 +277,58 @@ function activatePill(name){
   const target = document.querySelector(`.step-pill[data-pill="${name}"]`);
   if (target) target.classList.add("active");
 }
-function openSection(id){ const section = $(id); section.classList.remove("section-hidden"); section.classList.add("open"); }
-function closeSection(id){ const section = $(id); section.classList.remove("open"); section.classList.add("section-hidden"); }
+function updateToggleLabel(id){
+  const item = sectionToggleButtons[id];
+  if (!item) return;
+  const section = item.section;
+  if (section.classList.contains("section-hidden") || section.classList.contains("collapsed")) {
+    item.button.textContent = "Show";
+  } else {
+    item.button.textContent = "Hide";
+  }
+}
+function openSection(id){
+  const section = $(id);
+  section.classList.remove("section-hidden", "collapsed");
+  section.classList.add("open");
+  updateToggleLabel(id);
+}
+function closeSection(id){
+  const section = $(id);
+  section.classList.remove("open", "collapsed");
+  section.classList.add("section-hidden");
+  updateToggleLabel(id);
+}
+function toggleSection(id){
+  const section = $(id);
+  if (!section) return;
+  if (section.classList.contains("section-hidden")) {
+    openSection(id);
+  } else {
+    section.classList.toggle("collapsed");
+  }
+  updateToggleLabel(id);
+}
+function openProgressSection(id){
+  const index = FLOW_SECTIONS.indexOf(id);
+  if (index === -1) return;
+  FLOW_SECTIONS.slice(index + 1).forEach(closeSection);
+  openSection(id);
+}
+
+function resetToEnvironmentLoad(){
+  ["sec-audit","sec-db","sec-role","sec-user","sec-grant","sec-preview","sec-verify"].forEach(closeSection);
+  openSection("sec-env");
+  activatePill("env");
+  auditSaved = false;
+  selectedDb = null;
+  selectedDbs = [];
+  document.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
+  document.querySelectorAll('.status.show').forEach(s => s.className = 'status');
+  document.querySelectorAll('.out.open').forEach(o => o.classList.remove('open'));
+  $("role-db-name").textContent = "—";
+  $("db-selected-info").style.display = "none";
+}
 
 function wireRawToggle(toggleId, preId){
   const toggle = $(toggleId), pre = $(preId);
@@ -406,6 +460,7 @@ function setSessionExpiredState() {
 
 let selectedDb = null;
 let selectedDbs = [];
+let auditSaved = false;
 
 // ---- Remember environment scripts the user has actually typed, per browser ----
 const ENV_HISTORY_KEY = "gp_env_history";
@@ -448,30 +503,42 @@ async function saveAuditRequest(){
     });
     const data = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.detail || 'Failed to save request');
+    auditSaved = true;
     setStatus('status-request','ok', `Saved request ${data.id} at ${formatDateTime()}`);
+    setTimeout(() => closeSection('sec-audit'), 2400);
   }catch(err){ setStatus('status-request','err', err.message || String(err)); }
   finally{ btn.disabled = false; }
 }
-document.addEventListener('DOMContentLoaded', () => { initRequestTimestamp(); const b = $('btn-save-request'); if(b) b.addEventListener('click', (e)=>{ e.preventDefault(); saveAuditRequest(); }); });
+document.addEventListener('DOMContentLoaded', () => {
+  initRequestTimestamp();
+  const b = $('btn-save-request'); if(b) b.addEventListener('click', (e)=>{ e.preventDefault(); saveAuditRequest(); });
+  ["sec-audit","sec-db","sec-role","sec-user","sec-grant","sec-preview","sec-verify"].forEach(closeSection);
+  openSection("sec-env");
+});
 
 // Load env list when the page opens (if connected)
 refreshEnvList();
 $("btn-refresh-env").addEventListener("click", refreshEnvList);
+$("audit-toggle-link").addEventListener("click", () => toggleSection("sec-audit"));
 function wireSectionToggle(sectionId, buttonId) {
   const section = $(sectionId);
   const button = $(buttonId);
   if (!section || !button) return;
+  sectionToggleButtons[sectionId] = { section, button };
   const updateLabel = () => {
-    button.textContent = section.classList.contains("section-hidden") ? "Show" : "Hide";
+    const item = sectionToggleButtons[sectionId];
+    if (!item) return;
+    const section = item.section;
+    button.textContent = (section.classList.contains("section-hidden") || section.classList.contains("collapsed")) ? "Show" : "Hide";
   };
   button.addEventListener("click", () => {
-    section.classList.toggle("section-hidden");
-    section.classList.toggle("open", !section.classList.contains("section-hidden"));
+    toggleSection(sectionId);
     updateLabel();
   });
   updateLabel();
 }
 [
+  ["sec-audit", "btn-toggle-audit"],
   ["sec-env", "btn-toggle-env"],
   ["sec-db", "btn-toggle-db"],
   ["sec-role", "btn-toggle-role"],
@@ -481,17 +548,19 @@ function wireSectionToggle(sectionId, buttonId) {
   ["sec-verify", "btn-toggle-verify"]
 ].forEach(([sectionId, buttonId]) => wireSectionToggle(sectionId, buttonId));
 
+function hideHopPanel(){
+  const panel = $("hop-panel");
+  panel.classList.remove("active");
+  panel.classList.remove("open");
+}
+
 // ---- Hop panel toggle ----
 $("hop-toggle-link").addEventListener("click", () => {
   const panel = $("hop-panel");
   panel.classList.toggle("active");
   panel.classList.toggle("open", panel.classList.contains("active"));
 });
-$("btn-cancel-hop").addEventListener("click", () => {
-  const panel = $("hop-panel");
-  panel.classList.remove("active");
-  panel.classList.remove("open");
-});
+$("btn-cancel-hop").addEventListener("click", hideHopPanel);
 
 $("btn-hop").addEventListener("click", async () => {
   const host = $("hop-host").value.trim();
@@ -522,6 +591,7 @@ $("btn-hop").addEventListener("click", async () => {
     $("env-script").value = "";
     selectedDb = null;
 
+    setTimeout(hideHopPanel, 2200);
     $("hop-host").value = ""; $("hop-username").value = ""; $("hop-password").value = "";
   } catch (err) {
     setStatus("status-hop", "err", err.message);
@@ -550,7 +620,7 @@ $("btn-load-env").addEventListener("click", async () => {
     rememberEnvScript(envScript);
     markPillDone("env");
     activatePill("db");
-    openSection("sec-db");
+    openProgressSection("sec-db");
     // After loading an environment, refresh list (ports may vary per host)
     refreshEnvList();
   } catch (err) {
@@ -587,8 +657,7 @@ $("btn-load-db").addEventListener("click", async () => {
       $("db-selected-info").textContent = `Selected ${selectedDbs.length} database${selectedDbs.length === 1 ? "" : "s"}; active: ${selectedDb}.`;
       markPillDone("db");
       activatePill("role");
-      openSection("sec-role");
-      openSection("sec-user");
+      openProgressSection("sec-role");
     });
     showRawToggle("db-raw-toggle", "db-raw", data.raw_stdout);
     setStatus("status-db", "ok", `Found ${dbs.length} database${dbs.length === 1 ? "" : "s"}. Select one or more to continue.`);
@@ -613,6 +682,8 @@ $("btn-load-roles").addEventListener("click", async () => {
     showRawToggle("role-raw-toggle", "role-raw", data.raw_stdout);
     setStatus("status-role", "ok", `Found ${roles.length} role${roles.length === 1 ? "" : "s"}.`);
     markPillDone("role");
+    activatePill("user");
+    openProgressSection("sec-user");
 
     renderChips("grant-roles", roles, "multi", () => {});
   } catch (err) {
@@ -638,7 +709,7 @@ $("btn-lookup-user").addEventListener("click", async () => {
       data.found ? "User found — expand raw output above for the current record." : "No existing record — grant will apply to a new user.");
     markPillDone("user");
     activatePill("grant");
-    openSection("sec-grant");
+    openProgressSection("sec-grant");
   } catch (err) {
     setStatus("status-user", "err", err.message);
   } finally {
@@ -657,6 +728,7 @@ $("btn-preview").addEventListener("click", async () => {
   const grants = [...document.querySelectorAll(".chip.grant-check.selected")].map(c => c.dataset.value);
   const roles = selectedChips("grant-roles");
 
+  if (!auditSaved) { setStatus("status-grant", "err", "Save the audit request before previewing grants."); return; }
   if (!username) { setStatus("status-grant", "err", "Enter a username in the previous step"); return; }
   if (!grants.length && !roles.length) { setStatus("status-grant", "err", "Select at least one grant or role"); return; }
 
@@ -672,7 +744,7 @@ $("btn-preview").addEventListener("click", async () => {
     setStatus("status-grant", "ok", "Preview ready below.");
     markPillDone("grant");
     activatePill("preview");
-    openSection("sec-preview");
+    openProgressSection("sec-preview");
   } catch (err) {
     setStatus("status-grant", "err", err.message);
   } finally {
@@ -686,6 +758,7 @@ $("btn-execute").addEventListener("click", async () => {
   const grants = [...document.querySelectorAll(".chip.grant-check.selected")].map(c => c.dataset.value);
   const roles = selectedChips("grant-roles");
 
+  if (!auditSaved) { setStatus("status-preview", "err", "Save the audit request before executing grants."); return; }
   const btn = $("btn-execute");
   btn.disabled = true;
   setStatus("status-preview", "pending", "Executing against dbaccess…");
@@ -697,7 +770,7 @@ $("btn-execute").addEventListener("click", async () => {
     setStatus("status-preview", "ok", `Executed.\n${data.stdout || ""}`);
     markPillDone("preview");
     activatePill("verify");
-    openSection("sec-verify");
+    openProgressSection("sec-verify");
   } catch (err) {
     setStatus("status-preview", "err", err.message);
   } finally {
@@ -718,6 +791,7 @@ $("btn-verify").addEventListener("click", async () => {
     showRawToggle("verify-raw-toggle", "verify-raw", data.raw_stdout || "(no rows found)");
     setStatus("status-verify", "ok", "Verification complete — expand raw output above and compare against the grant you executed.");
     markPillDone("verify");
+    setTimeout(resetToEnvironmentLoad, 3600);
   } catch (err) {
     setStatus("status-verify", "err", err.message);
   } finally {

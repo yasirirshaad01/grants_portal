@@ -24,10 +24,13 @@ body { padding: 24px; }
 .topbar a:hover { color: var(--text); }
 
 section {
+  display: block;
   border: 1px solid var(--line); border-radius: 16px; padding: 18px; background: rgba(12, 18, 14, 0.98);
 }
 section.open { border-color: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(57, 217, 138, 0.12); }
-section.section-hidden { border-color: var(--line); box-shadow: none; }
+section.section-hidden { display: none !important; border-color: var(--line); box-shadow: none; }
+section.collapsed .section-body { display: none; }
+section.collapsed .section-header { margin-bottom: 0; }
 section.section-hidden .section-body { display: none; }
 section.section-hidden .section-header { margin-bottom: 0; }
 
@@ -79,7 +82,7 @@ button + button { margin-left: 8px; }
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 999px; background: #111a15; color: var(--text);
   font-size: 13px;
 }
-.chip.active, .chip.grant-check.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.chip.active, .chip.selected, .chip.grant-check.active, .chip.grant-check.selected { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .chip-empty { color: var(--muted); font-size: 13px; }
 .raw-toggle { color: var(--info); cursor: pointer; font-size: 12px; text-decoration: underline; }
 
@@ -99,7 +102,11 @@ pre.out.open { display: block; }
 .status.err { color: #ff8b8b; border-color: #6f2c2e; }
 .status.pending { color: var(--info); border-color: #27566f; }
 
-.hop-panel { display: none; margin-top: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(17, 24, 20, 0.9); }
+.hop-panel { display: none; margin-top: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(17, 24, 20, 0.9); max-width: 640px; width: 100%; }
 .hop-panel.active, .hop-panel.open { display: block; }
+.hop-panel .field { max-width: 100%; width: 100%; }
+.hop-panel .field label { white-space: normal; line-height: 1.4; }
+.hop-panel .field input { min-width: 0; }
+.hop-panel h2 { margin: 0 0 12px; font-size: 16px; }
 
 @media (max-width: 720px) { .topbar { flex-direction: column; align-items: flex-start; } .steps { gap: 6px; } }

@@ -146,10 +146,13 @@
   connectFormSubmit('direct-form','connect/direct/','status-direct');
 
   // if already connected, jump straight to the workspace
-  if(sessionStorage.getItem('gp_session_id')){
+  if (sessionStorage.getItem('gp_session_id')) {
     document.getElementById('portal-login').style.display='none';
     document.getElementById('connect-block').style.display='none';
     window.location.href = 'workspace.html';
+  } else if (sessionStorage.getItem('gp_token')) {
+    document.getElementById('portal-login').style.display='none';
+    document.getElementById('connect-block').style.display='block';
   }
 </script>
 </body>
