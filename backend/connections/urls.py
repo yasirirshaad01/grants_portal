@@ -5,6 +5,7 @@ from .views import (
     DirectServerConnectView,
     HopView,
     DisconnectView,
+    GrantRequestCreateView,
     EnvironmentLoadView,
     EnvironmentListView,
     DatabaseListView,
@@ -20,6 +21,7 @@ urlpatterns = [
     path("connect/direct/", DirectServerConnectView.as_view(), name="connect-direct"),
     path("connect/hop/", HopView.as_view(), name="connect-hop"),
     path("disconnect/", DisconnectView.as_view(), name="disconnect"),
+    path("audit/request/", GrantRequestCreateView.as_view(), name="grant-request-create"),
 
     path("environment/load/", EnvironmentLoadView.as_view(), name="environment-load"),
     path("environment/list/", EnvironmentListView.as_view(), name="environment-list"),

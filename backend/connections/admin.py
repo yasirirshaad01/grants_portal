@@ -16,3 +16,13 @@ class AuditLogAdmin(admin.ModelAdmin):
     list_filter = ("action", "status")
     search_fields = ("portal_user__username", "detail", "executed_sql")
     readonly_fields = [f.name for f in AuditLog._meta.fields]
+
+
+from .models import GrantRequest
+
+@admin.register(GrantRequest)
+class GrantRequestAdmin(admin.ModelAdmin):
+    list_display = ("requested_at", "portal_user", "rights_type", "granter_name", "jira_ticket")
+    list_filter = ("rights_type",)
+    search_fields = ("portal_user__username", "granter_name", "jira_ticket")
+    readonly_fields = [f.name for f in GrantRequest._meta.fields]

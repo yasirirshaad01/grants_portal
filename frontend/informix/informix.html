@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grant Portal — Informix Rights</title>
+<link rel="stylesheet" href="informix.css">
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div>Session <b id="hdr-session">—</b> on <b id="hdr-host">—</b></div>
+    <div class="topbar-actions">
+      <a id="hop-toggle-link">hop to another server</a>
+      <a id="reconnect-link">reconnect via jump server</a>
+      <a id="disconnect-link" class="danger">disconnect</a>
+    </div>
+  </div>
+
+  <section id="sec-audit" class="open">
+    <div class="section-header">
+      <h2><span class="n">0</span>Audit request</h2>
+    </div>
+    <div class="section-body">
+      <p class="hint">Record the granter and ticket for audit before performing grants. Date/time is captured automatically.</p>
+      <div class="field">
+        <label for="granter-name">Granter name</label>
+        <input id="granter-name" list="granter-options" placeholder="Select or type a granter name">
+        <datalist id="granter-options">
+          <option value="DB Team Alpha"></option>
+          <option value="DB Team Beta"></option>
+          <option value="DB Team Gamma"></option>
+          <option value="DB Team Delta"></option>
+        </datalist>
+      </div>
+      <div class="field">
+        <label for="jira-ticket">DB JIRA ticket</label>
+        <input id="jira-ticket" placeholder="PROJ-1234">
+      </div>
+      <div class="field">
+        <label for="request-ts">Request date & time</label>
+        <input id="request-ts" readonly>
+      </div>
+      <div style="margin-top:8px;">
+        <button id="btn-save-request" class="ghost">Save audit request</button>
+      </div>
+      <div id="status-request" class="status"></div>
+    </div>
+  </section>
+
+  <div id="hop-panel" class="hop-panel">
+    <h2 style="margin-bottom:10px;">Hop to another host</h2>
+    <p class="hint">Tunnels from the currently connected host to another one in the same VLAN,
+without going back through the jump servers. Loading an environment again is required on the
+new host afterward.
+
+If you see an "Administratively prohibited" error, the current host is blocking SSH port
+forwarding (AllowTcpForwarding). Use a jump-server reconnection or a different gateway.</p>
+    <div class="field">
+      <label for="hop-host">Host</label>
+      <input id="hop-host" type="text" placeholder="10.11.56.182">
+    </div>
+    <div class="field">
+      <label for="hop-username">Username</label>
+      <input id="hop-username" type="text" placeholder="informix">
+    </div>
+    <div class="field">
+      <label for="hop-password">Password (leave blank for a trusted hop)</label>
+      <input id="hop-password" type="password">
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button id="btn-hop">Hop</button>
+      <button id="btn-cancel-hop" class="ghost">Cancel</button>
+    </div>
+    <div id="status-hop" class="status"></div>
+  </div>
+
+  <div class="steps">
+    <span class="step-pill active" data-pill="env">4 · environment</span>
+    <span class="step-pill" data-pill="db">7 · databases</span>
+    <span class="step-pill" data-pill="role">9 · roles</span>
+    <span class="step-pill" data-pill="user">10 · user</span>
+    <span class="step-pill" data-pill="grant">11 · grants</span>
+    <span class="step-pill" data-pill="preview">12 · preview</span>
+    <span class="step-pill" data-pill="verify">14 · verify</span>
+  </div>
+
+  <section id="sec-env" class="open">
+    <div class="section-header">
+      <h2><span class="n">1</span>Load environment</h2>
+      <button id="btn-toggle-env" class="small ghost">Hide</button>
+    </div>
+    <div class="section-body">
+      <p class="hint">Type the sourcing command for whichever Informix instance you need on this host —
+this is different per instance, there's no fixed default. Example: <code>. /mcp_qasi</code>,
+<code>. /mcp_prod41</code>, <code>. /inst_uat_env</code>, or whatever the instance actually uses.</p>
+      <div class="field">
+        <label for="env-script">Environment script</label>
+        <div style="display:flex; gap:8px; align-items:flex-start; margin-bottom:8px;">
+          <button id="btn-refresh-env" class="small ghost">Refresh env list</button>
+          <div style="flex:1">
+            <input id="env-script" type="text" placeholder=". /your_env_file" list="env-history" autocomplete="off">
+          </div>
+        </div>
+        <div id="env-table-wrap" style="margin-bottom:8px; display:block;">
+          <table id="env-table" style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr style="text-align:left; color:var(--muted); font-size:12px;"><th style="padding:6px 8px; border-bottom:1px solid var(--line); width:65%;">Environment</th><th style="padding:6px 8px; border-bottom:1px solid var(--line); width:35%;">Port</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <datalist id="env-history"></datalist>
+      </div>
+      <button id="btn-load-env">Load</button>
+      <div id="status-env" class="status"></div>
+    </div>
+  </section>
+
+  <section id="sec-db" class="section-hidden">
+    <div class="section-header">
+      <h2><span class="n">2</span>Select database</h2>
+      <button id="btn-toggle-db" class="small ghost">Hide</button>
+    </div>
+    <div class="section-body">
+      <p class="hint">Pulled from <code>sysdatabases</code> on the loaded instance. System databases are hidden by default.</p>
+      <div class="toolbar">
+        <button id="btn-load-db" class="ghost">Get databases</button>
+        <label class="checkbox-inline"><input type="checkbox" id="chk-include-system"> show system databases</label>
+      </div>
+      <div id="db-selected-info" class="hint" style="margin-bottom:8px; display:none;"></div>
+      <div id="db-empty" class="chip-empty" style="display:none;">No databases loaded yet.</div>
+      <div id="db-list" class="chip-grid"></div>
+      <span id="db-raw-toggle" class="raw-toggle" style="display:none;">show raw output</span>
+      <pre id="db-raw" class="out"></pre>
+      <div id="status-db" class="status"></div>
+    </div>
+  </section>
+
+  <section id="sec-role" class="section-hidden">
+    <div class="section-header">
+      <h2><span class="n">3</span>Roles in <span id="role-db-name">—</span></h2>
+      <button id="btn-toggle-role" class="small ghost">Hide</button>
+    </div>
+    <div class="section-body">
+      <p class="hint">Pulled from <code>sysroles</code> in the selected database.</p>
+      <button id="btn-load-roles" class="ghost">Get roles</button>
+      <div id="role-list" class="chip-grid" style="margin-top:14px;"></div>
+      <span id="role-raw-toggle" class="raw-toggle" style="display:none;">show raw output</span>
+      <pre id="role-raw" class="out"></pre>
+      <div id="status-role" class="status"></div>
+    </div>
+  </section>
+
+  <section id="sec-user" class="section-hidden">
+    <div class="section-header">
+      <h2><span class="n">4</span>Target user</h2>
+      <button id="btn-toggle-user" class="small ghost">Hide</button>
+    </div>
+    <div class="section-body">
+      <div class="field">
+        <label for="target-user">Username</label>
+        <input id="target-user" type="text" placeholder="akhalid06">
+      </div>
+      <button id="btn-lookup-user" class="ghost">Look up</button>
+      <span id="user-raw-toggle" class="raw-toggle" style="display:none; margin-top:14px;">show raw output</span>
+      <pre id="user-raw" class="out"></pre>
+      <div id="status-user" class="status"></div>
+    </div>
+  </section>
+
+  <section id="sec-grant" class="section-hidden">
+    <div class="section-header">
+      <h2><span class="n">5</span>Grants</h2>
+      <button id="btn-toggle-grant" class="small ghost">Hide</button>
+    </div>
+    <div class="section-body">
+      <p class="hint">Base privileges plus any default role from the list above.</p>
+      <div class="chip-grid">
+        <div class="chip grant-check" data-value="connect">CONNECT</div>
+        <div class="chip grant-check" data-value="resource">RESOURCE</div>
+        <div class="chip grant-check" data-value="dba">DBA</div>
+      </div>
+      <div id="grant-roles" class="chip-grid" style="margin-top:6px;"></div>
+      <button id="btn-preview" style="margin-top:8px;">Preview</button>
+      <div id="status-grant" class="status"></div>
+    </div>
+  </section>
+
+  <section id="sec-preview" class="section-hidden">
+    <div class="section-header">
+      <h2><span class="n">6</span>Review &amp; execute</h2>
+      <button id="btn-toggle-preview" class="small ghost">Hide</button>
+    </div>
+    <div class="section-body">
+      <pre id="preview-sql" class="sql-block"></pre>
+      <button id="btn-execute">Execute</button>
+      <div id="status-preview" class="status"></div>
+    </div>
+  </section>
+
+  <section id="sec-verify" class="section-hidden">
+    <div class="section-header">
+      <h2><span class="n">7</span>Verify</h2>
+      <button id="btn-toggle-verify" class="small ghost">Hide</button>
+    </div>
+    <div class="section-body">
+      <p class="hint">Re-runs the <code>sysusers</code> lookup for this user to confirm the grant stuck.</p>
+      <button id="btn-verify" class="ghost">Verify</button>
+      <span id="verify-raw-toggle" class="raw-toggle" style="display:none; margin-top:14px;">show raw output</span>
+      <pre id="verify-raw" class="out"></pre>
+      <div id="status-verify" class="status"></div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+function $(id){ return document.getElementById(id); }
+
+const API_BASE = sessionStorage.getItem("gp_api_base") || "http://127.0.0.1:8000/api";
+const token = sessionStorage.getItem("gp_token");
+let sessionId = sessionStorage.getItem("gp_session_id");
+let sessionExpired = false;
+
+// Require portal login to use the audit form; SSH session is optional for auditing
+if (!token) {
+  window.location.href = "../login.html?next=informix/informix.html";
+} else {
+  sessionStorage.setItem("gp_target_page", "informix/informix.html");
+  sessionStorage.setItem("gp_db_type", "informix");
+}
+
+$("hdr-session").textContent = sessionId ? sessionId.slice(0, 8) + "…" : "—";
+$("hdr-host").textContent = sessionStorage.getItem("gp_current_host") || "—";
+
+$("disconnect-link").addEventListener("click", async () => {
+  if (sessionExpired) {
+    sessionStorage.removeItem("gp_session_id");
+    window.location.href = "../index.html";
+    return;
+  }
+
+  await fetch(`${API_BASE}/disconnect/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Token ${token}` },
+    body: JSON.stringify({ session_id: sessionId })
+  }).catch(() => {});
+  sessionStorage.clear();
+  window.location.href = "index.html";
+});
+
+$("reconnect-link").addEventListener("click", () => {
+  window.location.href = "../index.html";
+});
+
+function setStatus(id, kind, text){
+  const el = $(id);
+  el.className = "status show " + kind;
+  el.textContent = text;
+}
+function markPillDone(name){
+  const target = document.querySelector(`.step-pill[data-pill="${name}"]`);
+  if (target) target.classList.add("done");
+}
+function markPillNotDone(name){
+  const target = document.querySelector(`.step-pill[data-pill="${name}"]`);
+  if (target) target.classList.remove("done");
+}
+function activatePill(name){
+  document.querySelectorAll(".step-pill").forEach(p => p.classList.remove("active"));
+  const target = document.querySelector(`.step-pill[data-pill="${name}"]`);
+  if (target) target.classList.add("active");
+}
+function openSection(id){ const section = $(id); section.classList.remove("section-hidden"); section.classList.add("open"); }
+function closeSection(id){ const section = $(id); section.classList.remove("open"); section.classList.add("section-hidden"); }
+
+function wireRawToggle(toggleId, preId){
+  const toggle = $(toggleId), pre = $(preId);
+  toggle.addEventListener("click", () => {
+    const isOpen = pre.classList.toggle("open");
+    toggle.textContent = isOpen ? "hide raw output" : "show raw output";
+  });
+}
+[["db-raw-toggle","db-raw"], ["role-raw-toggle","role-raw"], ["user-raw-toggle","user-raw"], ["verify-raw-toggle","verify-raw"]]
+  .forEach(([t, p]) => wireRawToggle(t, p));
+
+function showRawToggle(toggleId, preId, text){
+  $(preId).textContent = text || "";
+  $(toggleId).style.display = "inline-block";
+}
+
+function initializeSessionState() {
+  if (!sessionId) {
+    sessionExpired = true;
+    setSessionExpiredState();
+  }
+}
+
+// Refresh the list of environment scripts available on the current host
+async function refreshEnvList(){
+  if (!sessionId || sessionExpired) return;
+  const btn = $("btn-refresh-env");
+  btn.disabled = true;
+  try {
+    const data = await api(`/environment/list/?session_id=${sessionId}`);
+    const tbody = document.querySelector('#env-table tbody');
+    tbody.innerHTML = '';
+    (data.envs || []).forEach(e => {
+      const tr = document.createElement('tr');
+      tr.style.cursor = 'pointer';
+      tr.innerHTML = `<td style="padding:8px 6px; border-bottom:1px solid var(--line);">${e.name}</td><td style="padding:8px 6px; border-bottom:1px solid var(--line);">${e.port || '—'}</td>`;
+      tr.addEventListener('click', () => {
+        $("env-script").value = `. /${e.name}`;
+        $("env-script").focus();
+      });
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    // ignore UI errors for env list
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Renders a list of plain-text names as selectable chips.
+// mode: "single" (radio-like, only one selected at a time) or "multi" (checkbox-like).
+function renderChips(containerId, names, mode, onChange){
+  const container = $(containerId);
+  container.innerHTML = "";
+  if (!names.length) {
+    container.innerHTML = `<div class="chip-empty">Nothing found.</div>`;
+    return;
+  }
+  const selected = new Set();
+  names.forEach(name => {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.textContent = name;
+    chip.dataset.value = name;
+    chip.addEventListener("click", () => {
+      if (mode === "single") {
+        container.querySelectorAll(".chip").forEach(c => c.classList.remove("selected"));
+        chip.classList.add("selected");
+        selected.clear();
+        selected.add(name);
+      } else if (mode === "single-or-multi") {
+        container.querySelectorAll(".chip").forEach(c => c.classList.remove("selected"));
+        chip.classList.add("selected");
+        selected.clear();
+        selected.add(name);
+      } else {
+        chip.classList.toggle("selected");
+        if (chip.classList.contains("selected")) selected.add(name); else selected.delete(name);
+      }
+      onChange([...selected]);
+    });
+    container.appendChild(chip);
+  });
+}
+function selectedChips(containerId){
+  return [...document.querySelectorAll(`#${containerId} .chip.selected`)].map(c => c.dataset.value);
+}
+
+async function api(path, opts = {}){
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Token ${token}`,
+      ...(opts.headers || {})
+    }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const errMsg = data.detail || data.stderr || data.raw_stderr || `Request failed (${res.status})`;
+    if ((res.status === 409 || res.status === 404) && sessionId) {
+      sessionExpired = true;
+      setSessionExpiredState();
+    }
+    const err = new Error(errMsg);
+    err.responseData = data;
+    throw err;
+  }
+  return data;
+}
+
+function setSessionExpiredState() {
+  if (!sessionExpired) return;
+  sessionStorage.removeItem("gp_session_id");
+  sessionId = null;
+  $("hdr-session").textContent = "expired";
+  $("hdr-host").textContent = sessionStorage.getItem("gp_current_host") || "—";
+  $("disconnect-link").textContent = "connect";
+  $("disconnect-link").classList.remove("danger");
+  $("disconnect-link").classList.add("ghost");
+  $("reconnect-link").style.display = "none";
+  $("hop-toggle-link").style.pointerEvents = "none";
+  $("hop-toggle-link").style.opacity = "0.4";
+  ["btn-load-env", "btn-load-db", "btn-load-roles", "btn-lookup-user", "btn-preview", "btn-execute", "btn-verify"].forEach(id => {
+    const el = $(id);
+    if (el) el.disabled = true;
+  });
+}
+
+let selectedDb = null;
+let selectedDbs = [];
+
+// ---- Remember environment scripts the user has actually typed, per browser ----
+const ENV_HISTORY_KEY = "gp_env_history";
+function loadEnvHistory(){
+  try { return JSON.parse(localStorage.getItem(ENV_HISTORY_KEY) || "[]"); }
+  catch { return []; }
+}
+function saveEnvHistory(list){ localStorage.setItem(ENV_HISTORY_KEY, JSON.stringify(list.slice(0, 10))); }
+function renderEnvHistory(){
+  const datalist = $("env-history");
+  datalist.innerHTML = "";
+  loadEnvHistory().forEach(script => {
+    const opt = document.createElement("option");
+    opt.value = script;
+    datalist.appendChild(opt);
+  });
+}
+function rememberEnvScript(script){
+  const list = loadEnvHistory().filter(s => s !== script);
+  list.unshift(script);
+  saveEnvHistory(list);
+  renderEnvHistory();
+}
+renderEnvHistory();
+initializeSessionState();
+// Initialize audit request timestamp and wire the save handler
+function formatDateTime(){ return new Date().toISOString().slice(0,19).replace('T',' '); }
+function initRequestTimestamp(){ const el = $('request-ts'); if(el) el.value = formatDateTime(); }
+async function saveAuditRequest(){
+  const granter = $('granter-name').value.trim();
+  const jira = $('jira-ticket').value.trim();
+  if(!granter){ setStatus('status-request','err','Granter name is required.'); return; }
+  if(!jira){ setStatus('status-request','err','JIRA ticket is required.'); return; }
+  const btn = $('btn-save-request'); btn.disabled = true; setStatus('status-request','pending','Saving audit request...');
+  try{
+    const res = await fetch(`${API_BASE}/audit/request/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Token ${token}` },
+      body: JSON.stringify({ rights_type: 'informix', granter_name: granter, jira_ticket: jira })
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.detail || 'Failed to save request');
+    setStatus('status-request','ok', `Saved request ${data.id} at ${formatDateTime()}`);
+  }catch(err){ setStatus('status-request','err', err.message || String(err)); }
+  finally{ btn.disabled = false; }
+}
+document.addEventListener('DOMContentLoaded', () => { initRequestTimestamp(); const b = $('btn-save-request'); if(b) b.addEventListener('click', (e)=>{ e.preventDefault(); saveAuditRequest(); }); });
+
+// Load env list when the page opens (if connected)
+refreshEnvList();
+$("btn-refresh-env").addEventListener("click", refreshEnvList);
+function wireSectionToggle(sectionId, buttonId) {
+  const section = $(sectionId);
+  const button = $(buttonId);
+  if (!section || !button) return;
+  const updateLabel = () => {
+    button.textContent = section.classList.contains("section-hidden") ? "Show" : "Hide";
+  };
+  button.addEventListener("click", () => {
+    section.classList.toggle("section-hidden");
+    section.classList.toggle("open", !section.classList.contains("section-hidden"));
+    updateLabel();
+  });
+  updateLabel();
+}
+[
+  ["sec-env", "btn-toggle-env"],
+  ["sec-db", "btn-toggle-db"],
+  ["sec-role", "btn-toggle-role"],
+  ["sec-user", "btn-toggle-user"],
+  ["sec-grant", "btn-toggle-grant"],
+  ["sec-preview", "btn-toggle-preview"],
+  ["sec-verify", "btn-toggle-verify"]
+].forEach(([sectionId, buttonId]) => wireSectionToggle(sectionId, buttonId));
+
+// ---- Hop panel toggle ----
+$("hop-toggle-link").addEventListener("click", () => {
+  const panel = $("hop-panel");
+  panel.classList.toggle("active");
+  panel.classList.toggle("open", panel.classList.contains("active"));
+});
+$("btn-cancel-hop").addEventListener("click", () => {
+  const panel = $("hop-panel");
+  panel.classList.remove("active");
+  panel.classList.remove("open");
+});
+
+$("btn-hop").addEventListener("click", async () => {
+  const host = $("hop-host").value.trim();
+  const username = $("hop-username").value.trim();
+  const password = $("hop-password").value;
+  if (!host || !username) { setStatus("status-hop", "err", "Host and username are required"); return; }
+
+  const btn = $("btn-hop");
+  btn.disabled = true;
+  setStatus("status-hop", "pending", `Hopping to ${host}…`);
+  try {
+    const data = await api("/connect/hop/", {
+      method: "POST",
+      body: JSON.stringify({
+        session_id: sessionId, host, username,
+        password, mode: password ? "password" : "trusted"
+      })
+    });
+    setStatus("status-hop", "ok", `Now on ${data.current_host}. Load the environment again below.`);
+    sessionStorage.setItem("gp_current_host", data.current_host || "");
+    $("hdr-host").textContent = data.current_host || "—";
+
+    // The backend cleared env_script for this session since we're on a
+    // new host now - mirror that by resetting everything past step 1.
+    ["db","role","user","grant","preview","verify"].forEach(markPillNotDone);
+    activatePill("env");
+    ["sec-db","sec-role","sec-user","sec-grant","sec-preview","sec-verify"].forEach(closeSection);
+    $("env-script").value = "";
+    selectedDb = null;
+
+    $("hop-host").value = ""; $("hop-username").value = ""; $("hop-password").value = "";
+  } catch (err) {
+    setStatus("status-hop", "err", err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---- Load environment ----
+$("btn-load-env").addEventListener("click", async () => {
+  const envScript = $("env-script").value.trim();
+  if (!envScript) {
+    setStatus("status-env", "err", "Enter the environment script for this instance — there's no default.");
+    return;
+  }
+  const btn = $("btn-load-env");
+  btn.disabled = true;
+  setStatus("status-env", "pending", `Sourcing ${envScript}…`);
+  try {
+    const data = await api("/environment/load/", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, env_script: envScript })
+    });
+    const inst = data.instance || {};
+    setStatus("status-env", "ok", `Loaded\nstatus: ${inst.status || "n/a"}\nuptime: ${inst.uptime || "n/a"}`);
+    rememberEnvScript(envScript);
+    markPillDone("env");
+    activatePill("db");
+    openSection("sec-db");
+    // After loading an environment, refresh list (ports may vary per host)
+    refreshEnvList();
+  } catch (err) {
+    let msg = err.message;
+    if (err.responseData) {
+      const detail = err.responseData.stderr || err.responseData.raw_stdout;
+      if (detail) msg = `${err.message}\n---\n${detail}`;
+    }
+    setStatus("status-env", "err", msg);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---- List databases ----
+$("btn-load-db").addEventListener("click", async () => {
+  const btn = $("btn-load-db");
+  btn.disabled = true;
+  setStatus("status-db", "pending", "Querying sysdatabases…");
+  try {
+    const includeSystem = $("chk-include-system").checked;
+    const data = await api(`/databases/?session_id=${sessionId}&include_system=${includeSystem}`);
+    const dbs = data.databases || [];
+    selectedDbs = [];
+    renderChips("db-list", dbs, "multi", (sel) => {
+      selectedDbs = sel;
+      selectedDb = sel[sel.length - 1] || null;
+      $("role-db-name").textContent = selectedDb || "—";
+      if (!selectedDbs.length) {
+        $("db-selected-info").style.display = "none";
+        return;
+      }
+      $("db-selected-info").style.display = "block";
+      $("db-selected-info").textContent = `Selected ${selectedDbs.length} database${selectedDbs.length === 1 ? "" : "s"}; active: ${selectedDb}.`;
+      markPillDone("db");
+      activatePill("role");
+      openSection("sec-role");
+      openSection("sec-user");
+    });
+    showRawToggle("db-raw-toggle", "db-raw", data.raw_stdout);
+    setStatus("status-db", "ok", `Found ${dbs.length} database${dbs.length === 1 ? "" : "s"}. Select one or more to continue.`);
+  } catch (err) {
+    setStatus("status-db", "err", err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+$("chk-include-system").addEventListener("change", () => $("btn-load-db").click());
+
+// ---- List roles ----
+$("btn-load-roles").addEventListener("click", async () => {
+  if (!selectedDbs.length) { setStatus("status-role", "err", "Select at least one database first"); return; }
+  const btn = $("btn-load-roles");
+  btn.disabled = true;
+  setStatus("status-role", "pending", "Querying sysroles…");
+  try {
+    const data = await api(`/databases/${selectedDb}/roles/?session_id=${sessionId}`);
+    const roles = data.roles || [];
+    renderChips("role-list", roles, "multi", () => {});
+    showRawToggle("role-raw-toggle", "role-raw", data.raw_stdout);
+    setStatus("status-role", "ok", `Found ${roles.length} role${roles.length === 1 ? "" : "s"}.`);
+    markPillDone("role");
+
+    renderChips("grant-roles", roles, "multi", () => {});
+  } catch (err) {
+    setStatus("status-role", "err", err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---- User lookup ----
+$("btn-lookup-user").addEventListener("click", async () => {
+  const username = $("target-user").value.trim();
+  if (!username) { setStatus("status-user", "err", "Enter a username"); return; }
+  if (!selectedDb) { setStatus("status-user", "err", "Select a database first"); return; }
+
+  const btn = $("btn-lookup-user");
+  btn.disabled = true;
+  setStatus("status-user", "pending", "Checking sysusers…");
+  try {
+    const data = await api(`/databases/${selectedDb}/users/${username}/?session_id=${sessionId}`);
+    showRawToggle("user-raw-toggle", "user-raw", data.raw_stdout || "(no rows found)");
+    setStatus("status-user", data.found ? "ok" : "pending",
+      data.found ? "User found — expand raw output above for the current record." : "No existing record — grant will apply to a new user.");
+    markPillDone("user");
+    activatePill("grant");
+    openSection("sec-grant");
+  } catch (err) {
+    setStatus("status-user", "err", err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---- Grants: click-to-toggle chips for CONNECT/RESOURCE/DBA ----
+document.querySelectorAll(".chip.grant-check").forEach(chip => {
+  chip.addEventListener("click", () => chip.classList.toggle("selected"));
+});
+
+// ---- Preview grant SQL ----
+$("btn-preview").addEventListener("click", async () => {
+  const username = $("target-user").value.trim();
+  const grants = [...document.querySelectorAll(".chip.grant-check.selected")].map(c => c.dataset.value);
+  const roles = selectedChips("grant-roles");
+
+  if (!username) { setStatus("status-grant", "err", "Enter a username in the previous step"); return; }
+  if (!grants.length && !roles.length) { setStatus("status-grant", "err", "Select at least one grant or role"); return; }
+
+  const btn = $("btn-preview");
+  btn.disabled = true;
+  setStatus("status-grant", "pending", "Building statements…");
+  try {
+    const data = await api("/grants/preview/", {
+      method: "POST",
+      body: JSON.stringify({ username, grants, roles })
+    });
+    $("preview-sql").textContent = data.statements.join("\n");
+    setStatus("status-grant", "ok", "Preview ready below.");
+    markPillDone("grant");
+    activatePill("preview");
+    openSection("sec-preview");
+  } catch (err) {
+    setStatus("status-grant", "err", err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---- Execute grant ----
+$("btn-execute").addEventListener("click", async () => {
+  const username = $("target-user").value.trim();
+  const grants = [...document.querySelectorAll(".chip.grant-check.selected")].map(c => c.dataset.value);
+  const roles = selectedChips("grant-roles");
+
+  const btn = $("btn-execute");
+  btn.disabled = true;
+  setStatus("status-preview", "pending", "Executing against dbaccess…");
+  try {
+    const data = await api("/grants/execute/", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, db_name: selectedDb, username, grants, roles })
+    });
+    setStatus("status-preview", "ok", `Executed.\n${data.stdout || ""}`);
+    markPillDone("preview");
+    activatePill("verify");
+    openSection("sec-verify");
+  } catch (err) {
+    setStatus("status-preview", "err", err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---- Verify ----
+$("btn-verify").addEventListener("click", async () => {
+  const username = $("target-user").value.trim();
+  if (!username || !selectedDb) { setStatus("status-verify", "err", "Missing username or database"); return; }
+
+  const btn = $("btn-verify");
+  btn.disabled = true;
+  setStatus("status-verify", "pending", "Re-querying sysusers…");
+  try {
+    const data = await api(`/grants/verify/${selectedDb}/${username}/?session_id=${sessionId}`);
+    showRawToggle("verify-raw-toggle", "verify-raw", data.raw_stdout || "(no rows found)");
+    setStatus("status-verify", "ok", "Verification complete — expand raw output above and compare against the grant you executed.");
+    markPillDone("verify");
+  } catch (err) {
+    setStatus("status-verify", "err", err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

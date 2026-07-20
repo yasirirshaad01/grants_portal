@@ -1,0 +1,36 @@
+:root{
+  --bg:#081116;
+  --panel:#121a18;
+  --line:#1d2d27;
+  --text:#e6eee5;
+  --muted:#7d9585;
+  --accent:#a3db6f;
+  --mono:"IBM Plex Mono","JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;height:100%;font-family:var(--mono);background:radial-gradient(circle at top,#0d1914 0%,var(--bg) 60%);color:var(--text);}
+body{padding:26px;}
+.page{max-width:860px;margin:0 auto;}
+.nav{display:flex;justify-content:space-between;align-items:center;padding:18px 24px;border:1px solid var(--line);border-radius:16px;background:rgba(12,18,15,.94);}
+.nav a{color:var(--muted);text-decoration:none;font-size:13px;}
+.nav a:hover{color:var(--accent);}
+.hero{margin-top:22px;padding:24px;border-radius:18px;background:rgba(12,18,15,.96);border:1px solid var(--line);}
+.hero h1{margin:0 0 10px;font-size:30px;}
+.hero p{margin:0;color:var(--muted);line-height:1.7;}
+.panel{margin-top:20px;padding:24px;border-radius:18px;background:rgba(12,18,15,.98);border:1px solid var(--line);}
+.panel h2{margin:0 0 16px;font-size:20px;color:var(--accent);}
+.field{display:flex;flex-direction:column;gap:8px;margin-bottom:18px;}
+.field label{font-size:11px;text-transform:uppercase;color:var(--muted);letter-spacing:.08em;}
+.field input{background:#0d1713;border:1px solid var(--line);border-radius:12px;color:var(--text);font-family:var(--mono);font-size:14px;padding:12px 14px;outline:none;}
+.field input:focus{border-color:var(--accent);}
+.button{border:none;border-radius:999px;padding:14px 18px;font-family:var(--mono);font-weight:700;cursor:pointer;transition:background .2s;}
+.button.primary{background:var(--accent);color:#10230e;}
+.button.secondary{background:transparent;border:1px solid var(--line);color:var(--text);}
+.button.primary:hover{background:#c4eb95;}
+.notice{margin-top:18px;padding:18px;border-radius:14px;background:rgba(12,18,15,.9);border:1px solid var(--line);color:var(--muted);}
+.status{margin-top:16px;padding:14px;border-radius:14px;border:1px solid var(--line);display:none;white-space:pre-wrap;font-size:14px;}
+.status.show{display:block;}
+.status.ok{color:var(--accent);border-color:#5d8b30;}
+.status.err{color:#e0a57a;border-color:#7f4e33;}
+.button-row{display:flex;gap:12px;flex-wrap:wrap;}
+@media(max-width:720px){.button-row{flex-direction:column;}}

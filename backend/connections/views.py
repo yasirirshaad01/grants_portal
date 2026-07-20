@@ -15,9 +15,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from .serializers import JumpConnectSerializer, DirectConnectSerializer, HopSerializer
+from .serializers import JumpConnectSerializer, DirectConnectSerializer, HopSerializer, GrantRequestSerializer
 from .ssh_manager import SSHManager, SSHConnectionError
-from .models import SSHSession, AuditLog
+from .models import SSHSession, AuditLog, GrantRequest
 from . import dbops
 import re
 
@@ -192,6 +192,18 @@ class DisconnectView(APIView):
             manager.close()
         SSHSession.objects.filter(id=session_id, portal_user=request.user).update(is_active=False)
         return Response({"status": "disconnected"})
+
+
+class GrantRequestCreateView(APIView):
+    def post(self, request):
+        serializer = GrantRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        request_obj = serializer.save(portal_user=request.user)
+        return Response({
+            "status": "saved",
+            "id": request_obj.id,
+            "requested_at": request_obj.requested_at,
+        })
 
 
 # ----------------------------------------------------------------------

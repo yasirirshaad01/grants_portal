@@ -1,6 +1,8 @@
 from django.conf import settings
 from rest_framework import serializers
 
+from .models import GrantRequest
+
 
 class JumpConnectSerializer(serializers.Serializer):
     host = serializers.CharField()
@@ -37,3 +39,9 @@ class SessionResponseSerializer(serializers.Serializer):
     session_id = serializers.UUIDField()
     status = serializers.CharField()
     current_host = serializers.CharField()
+
+
+class GrantRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GrantRequest
+        fields = ["rights_type", "granter_name", "jira_ticket"]

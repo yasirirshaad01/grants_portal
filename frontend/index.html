@@ -3,429 +3,154 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Grant Portal — Connect</title>
-<style>
-  :root{
-    --bg:          #0b0e0e;
-    --panel:       #101514;
-    --line:        #1f2b28;
-    --text:        #d8ded9;
-    --muted:       #6d7c76;
-    --accent:      #39d98a;
-    --accent-dim:  #1f6b48;
-    --amber:       #e8a33d;
-    --danger:      #e5484d;
-    --mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-  *{ box-sizing:border-box; }
-  html,body{ height:100%; }
-  body{
-    margin:0;
-    background:
-      radial-gradient(ellipse at top, #101817 0%, var(--bg) 55%);
-    color:var(--text);
-    font-family:var(--mono);
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    padding:24px;
-  }
-
-  .crt{
-    width:100%;
-    max-width:640px;
-  }
-
-  .titlebar{
-    display:flex;
-    align-items:center;
-    gap:8px;
-    padding:10px 14px;
-    background:#141a19;
-    border:1px solid var(--line);
-    border-bottom:none;
-    border-radius:10px 10px 0 0;
-  }
-  .dot{ width:10px; height:10px; border-radius:50%; }
-  .dot.r{ background:#4a2b2c; }
-  .dot.y{ background:#4a3f24; }
-  .dot.g{ background:#234a34; }
-  .titlebar span.label{
-    margin-left:8px;
-    color:var(--muted);
-    font-size:12px;
-    letter-spacing:.06em;
-  }
-
-  .panel{
-    background:var(--panel);
-    border:1px solid var(--line);
-    border-radius:0 0 10px 10px;
-    padding:26px 28px 28px;
-  }
-
-  .banner{
-    border:1px solid var(--accent-dim);
-    color:var(--muted);
-    font-size:11.5px;
-    line-height:1.55;
-    padding:14px 16px;
-    border-radius:6px;
-    margin-bottom:22px;
-    white-space:pre-wrap;
-  }
-  .banner b{ color:var(--amber); font-weight:600; }
-
-  h1{
-    font-size:15px;
-    font-weight:600;
-    letter-spacing:.04em;
-    margin:0 0 4px;
-    color:var(--text);
-  }
-  .sub{
-    color:var(--muted);
-    font-size:12.5px;
-    margin:0 0 22px;
-  }
-
-  .tabs{
-    display:flex;
-    gap:2px;
-    margin-bottom:20px;
-    border:1px solid var(--line);
-    border-radius:8px;
-    overflow:hidden;
-  }
-  .tab{
-    flex:1;
-    text-align:center;
-    padding:10px 8px;
-    font-size:12px;
-    letter-spacing:.03em;
-    color:var(--muted);
-    cursor:pointer;
-    background:#0e1312;
-    user-select:none;
-  }
-  .tab.active{
-    background:#132420;
-    color:var(--accent);
-  }
-
-  form{ display:none; flex-direction:column; gap:14px; }
-  form.active{ display:flex; }
-
-  label{
-    font-size:11px;
-    color:var(--muted);
-    letter-spacing:.05em;
-    text-transform:uppercase;
-    display:block;
-    margin-bottom:6px;
-  }
-  select, input{
-    width:100%;
-    background:#0d1211;
-    border:1px solid var(--line);
-    color:var(--text);
-    font-family:var(--mono);
-    font-size:13.5px;
-    padding:10px 12px;
-    border-radius:6px;
-    outline:none;
-  }
-  select:focus, input:focus{
-    border-color:var(--accent);
-  }
-  .field{ margin-bottom:0; }
-
-  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-
-  button.run{
-    margin-top:6px;
-    background:var(--accent);
-    color:#062017;
-    border:none;
-    font-family:var(--mono);
-    font-weight:700;
-    font-size:13px;
-    letter-spacing:.03em;
-    padding:12px;
-    border-radius:6px;
-    cursor:pointer;
-  }
-  button.run:hover{ background:#4ee89c; }
-  button.run:disabled{ background:#274038; color:#5b6b63; cursor:not-allowed; }
-
-  .status{
-    margin-top:18px;
-    font-size:12.5px;
-    padding:12px 14px;
-    border-radius:6px;
-    border:1px solid var(--line);
-    display:none;
-    white-space:pre-wrap;
-  }
-  .status.show{ display:block; }
-  .status.ok{ border-color:var(--accent-dim); color:var(--accent); }
-  .status.err{ border-color:#4a2b2c; color:var(--danger); }
-  .status.pending{ color:var(--amber); border-color:#4a3f24; }
-
-  .cursor{
-    display:inline-block;
-    width:7px; height:13px;
-    background:var(--accent);
-    margin-left:4px;
-    animation:blink 1s steps(1) infinite;
-    vertical-align:-2px;
-  }
-  @keyframes blink{ 50%{ opacity:0; } }
-
-  .foot{
-    margin-top:20px;
-    font-size:11px;
-    color:#43514c;
-    text-align:center;
-  }
-</style>
+<title>Grant Portal</title>
+<link rel="stylesheet" href="landing.css">
 </head>
 <body>
+<div class="page">
+  <header class="navbar">
+    <div class="brand">Grant <span>Portal</span></div>
+    <nav class="nav-links">
+      <a href="profile.html">Profile</a>
+      <a href="login.html?next=informix/informix.html">Informix Rights</a>
+      <a href="login.html?next=mysql/mysql.html">MySQL Rights</a>
+      <a href="login.html?next=greenplum/greenplum.html">Greenplum Rights</a>
+      <a href="login.html?next=postgres/postgres.html">Postgres Rights</a>
+    </nav>
+  </header>
 
-<div class="crt">
-  <div class="titlebar">
-    <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
-    <span class="label">grant-portal · connect</span>
-  </div>
+  <section class="hero">
+    <h1>Rights workflows built for every database family.</h1>
+    <p>Start with Informix today, and keep MySQL, Greenplum, and Postgres separated in their own pages. Each workflow is independent, audit-ready, and ready for hosting.</p>
+  </section>
 
-  <div class="panel">
-    <div class="banner"><b>NOTICE:</b> This system is for the use of authorized users only. Sessions are proxied
-by the backend and monitored/recorded. Individuals using this system without
-authority are subject to activity logging for compliance and audit review.</div>
-
-    <h1>PORTAL SESSION</h1>
-    <p class="sub" id="portal-sub">Sign in to the grant portal before opening a server connection.</p>
-
-    <form id="portal-login" class="active">
-      <div class="field">
-        <label for="pu">Portal username</label>
-        <input id="pu" type="text" autocomplete="username" required>
+  <!-- Portal sign-in + connect block (shows before cards when not connected) -->
+  <section id="portal-panel" class="panel" style="margin-top:18px;">
+    <div id="portal-status" class="status"></div>
+    <form id="portal-login" class="form" style="max-width:880px;">
+      <div class="field"><label for="pu">Portal username</label><input id="pu" type="text" autocomplete="username" required></div>
+      <div class="field"><label for="pp">Portal password</label><input id="pp" type="password" autocomplete="current-password" required></div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button class="button primary" type="submit">Sign in</button>
+        <div style="color:var(--muted);font-size:13px;">or sign in to continue to connection</div>
       </div>
-      <div class="field">
-        <label for="pp">Portal password</label>
-        <input id="pp" type="password" autocomplete="current-password" required>
-      </div>
-      <button class="run" type="submit">Sign in</button>
     </form>
 
-    <div id="connect-block" style="display:none;">
-      <h1 style="margin-top:4px;">CONNECT TO SERVER</h1>
-      <p class="sub">Choose how the backend should reach the destination host. No password ever
-touches the browser's storage or leaves this session.</p>
+    <div id="connect-block" style="display:none;margin-top:18px;">
+      <h2 style="margin-top:0;color:var(--accent);">Connect to server</h2>
+      <div id="connect-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;">
+        <form id="jump-form" class="panel" style="padding:12px;">
+          <h3 style="margin-top:0;">Jump Server</h3>
+          <div class="field"><label for="jump-host">Jump server</label><select id="jump-host"><option value="10.11.82.50">10.11.82.50</option><option value="10.11.82.51">10.11.82.51</option></select></div>
+          <div class="field"><label for="jump-user">Username</label><input id="jump-user" type="text" placeholder="yarfat" required></div>
+          <div class="field"><label for="jump-f1">First factor</label><input id="jump-f1" type="password" required></div>
+          <div class="field"><label for="jump-f2">Second factor</label><input id="jump-f2" type="password" required></div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:6px;"><button class="run" type="submit">Connect</button></div>
+          <div id="status-jump" class="status"></div>
+        </form>
 
-      <div class="tabs">
-        <div class="tab active" data-tab="jump">Jump Server</div>
-        <div class="tab" data-tab="direct">Direct Trusted Host</div>
+        <form id="direct-form" class="panel" style="padding:12px;">
+          <h3 style="margin-top:0;">Direct Trusted Host</h3>
+          <div class="field"><label for="direct-host">Trusted host</label><select id="direct-host"><option value="10.11.56.185">10.11.56.185 (superuser)</option></select></div>
+          <div class="field"><label for="direct-user">Username</label><input id="direct-user" type="text" placeholder="informix" required></div>
+          <div class="field"><label for="direct-pass">Password</label><input id="direct-pass" type="password" required></div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:6px;"><button class="run" type="submit">Connect</button></div>
+          <div id="status-direct" class="status"></div>
+        </form>
       </div>
-
-      <form id="jump-form" class="active">
-        <div class="field">
-          <label for="jump-host">Jump server</label>
-          <select id="jump-host">
-            <option value="10.11.82.50">10.11.82.50</option>
-            <option value="10.11.82.51">10.11.82.51</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="jump-user">Username</label>
-          <input id="jump-user" type="text" placeholder="yarfat" required>
-        </div>
-        <div class="row2">
-          <div class="field">
-            <label for="jump-f1">First factor</label>
-            <input id="jump-f1" type="password" required>
-          </div>
-          <div class="field">
-            <label for="jump-f2">Second factor</label>
-            <input id="jump-f2" type="password" required>
-          </div>
-        </div>
-        <button class="run" type="submit">Connect</button>
-      </form>
-
-      <form id="direct-form">
-        <div class="field">
-          <label for="direct-host">Trusted host</label>
-          <select id="direct-host">
-            <option value="10.11.56.185">10.11.56.185 (superuser)</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="direct-user">Username</label>
-          <input id="direct-user" type="text" placeholder="informix" required>
-        </div>
-        <div class="field">
-          <label for="direct-pass">Password</label>
-          <input id="direct-pass" type="password" required>
-        </div>
-        <button class="run" type="submit">Connect</button>
-      </form>
-
-      <div id="status" class="status"></div>
     </div>
-  </div>
+  </section>
 
-  <div class="foot">backend: SSH orchestration engine · no interactive shell reaches the browser</div>
+  <div class="note">Each rights page is kept separate with its own HTML and CSS, so Informix remains clean and independent from the database areas still under construction.</div>
+  <div class="footer">Secure hosting-ready structure · SQLite audit storage today · extensible database pages tomorrow.</div>
 </div>
-
 <script>
-// Point this at wherever the Django backend is actually served.
-const API_BASE = "http://127.0.0.1:8000/api";
+  const activeTarget = sessionStorage.getItem("gp_target_page") || "";
+  const activeDb = activeTarget.includes("mysql") ? "mysql" : activeTarget.includes("greenplum") ? "greenplum" : activeTarget.includes("postgres") ? "postgres" : activeTarget.includes("informix") ? "informix" : "";
 
-let authToken = null;
-
-const $ = (id) => document.getElementById(id);
-
-function setStatus(kind, text, withCursor){
-  const el = $("status");
-  el.className = "status show " + kind;
-  el.textContent = text;
-  if (withCursor) {
-    const c = document.createElement("span");
-    c.className = "cursor";
-    el.appendChild(c);
-  }
-}
-
-// ---- Tab switching (Jump Server / Direct Trusted Host) ----
-document.querySelectorAll(".tab").forEach(tab => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-    document.querySelectorAll("#connect-block form").forEach(f => f.classList.remove("active"));
-    tab.classList.add("active");
-    $(tab.dataset.tab + "-form").classList.add("active");
-    $("status").className = "status";
+  document.querySelectorAll('.card').forEach(card => {
+    card.classList.toggle('active', card.dataset.db === activeDb);
   });
-});
 
-// ---- Step 1: portal login ----
-$("portal-login").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const btn = e.target.querySelector("button");
-  btn.disabled = true;
-  try {
-    const res = await fetch(`${API_BASE}/auth/login/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: $("pu").value, password: $("pp").value })
+  document.querySelectorAll('[data-next]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      location.href = btn.getAttribute('data-next');
     });
-    if (!res.ok) throw new Error("Invalid portal credentials");
-    const data = await res.json();
-    authToken = data.token;
+  });
 
-    // Persist token and API base so the workspace page can pick them up
-    try {
-      sessionStorage.setItem("gp_token", data.token);
-      sessionStorage.setItem("gp_api_base", API_BASE);
-      sessionStorage.setItem("gp_current_host", "");
-    } catch (e) {
-      console.warn("sessionStorage not available:", e);
-    }
+  const resumeLabels = {
+    informix: 'Continue Informix workflow',
+    mysql: 'Continue MySQL workflow',
+    greenplum: 'Continue Greenplum workflow',
+    postgres: 'Continue Postgres workflow'
+  };
 
-    $("portal-login").style.display = "none";
-    $("portal-sub").textContent = `Signed in as ${$("pu").value}.`;
-    $("connect-block").style.display = "block";
-  } catch (err) {
-    alert(err.message || "Sign-in failed");
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-// ---- Step 2a: connect via jump server ----
-$("jump-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  setStatus("pending", "Authenticating against jump server", true);
-  const btn = e.target.querySelector("button");
-  btn.disabled = true;
-  try {
-    const res = await fetch(`${API_BASE}/connect/jump/`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Token ${authToken}`
-      },
-      body: JSON.stringify({
-        host: $("jump-host").value,
-        username: $("jump-user").value,
-        first_factor: $("jump-f1").value,
-        second_factor: $("jump-f2").value
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus("err", data.detail || "Access denied");
-      return;
-    }
-    setStatus("ok", `Connected · session ${data.session_id}\nhost: ${data.current_host}\nready for environment load`);
-
-    // Save the live session and navigate to the workspace
-    try {
-      sessionStorage.setItem("gp_session_id", data.session_id);
-      sessionStorage.setItem("gp_current_host", data.current_host || "");
-    } catch (e) {
-      console.warn("sessionStorage not available:", e);
-    }
-    window.location.href = "workspace.html";
-  } catch (err) {
-    setStatus("err", "Network error reaching backend");
-  } finally {
-    btn.disabled = false;
-    $("jump-f1").value = "";
-    $("jump-f2").value = "";
-  }
-});
-
-// ---- Step 2b: connect directly to a trusted host ----
-$("direct-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  setStatus("pending", "Authenticating against trusted host", true);
-  const btn = e.target.querySelector("button");
-  btn.disabled = true;
-  try {
-    const res = await fetch(`${API_BASE}/connect/direct/`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Token ${authToken}`
-      },
-      body: JSON.stringify({
-        host: $("direct-host").value,
-        username: $("direct-user").value,
-        password: $("direct-pass").value
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus("err", data.detail || "Authentication failed");
-      return;
-    }
-    setStatus("ok", `Connected · session ${data.session_id}\nhost: ${data.current_host}\nready for environment load`);
-    try {
-      sessionStorage.setItem("gp_session_id", data.session_id);
-      sessionStorage.setItem("gp_current_host", data.current_host || "");
-    } catch (e) {
-      console.warn("sessionStorage not available:", e);
-    }
-    window.location.href = "workspace.html";
-  } catch (err) {
-    setStatus("err", "Network error reaching backend");
-  } finally {
-    btn.disabled = false;
-    $("direct-pass").value = "";
-  }
-});
+  document.querySelectorAll('.resume').forEach(el => {
+    const db = el.id.replace('resume-', '');
+    el.textContent = activeDb === db ? resumeLabels[db] : 'Resume here';
+  });
 </script>
+<script>
+  // --- Sign-in + connect handling for index page ---
+  const API_BASE = "http://127.0.0.1:8000/api";
+  const $ = (id) => document.getElementById(id);
 
+  function setPortalStatus(kind, text){ const el = $('portal-status'); if(!el) return; el.className = 'status show '+kind; el.textContent = text; }
+
+  async function parseJson(response){ return response.json().catch(()=> ({})); }
+
+  document.getElementById('portal-login').addEventListener('submit', async (e) =>{
+    e.preventDefault(); const btn = e.target.querySelector('button'); btn.disabled = true; setPortalStatus('pending','Signing in…');
+    try{
+      const res = await fetch(`${API_BASE}/auth/login/`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username: $('pu').value, password: $('pp').value})});
+      const data = await parseJson(res);
+      if(!res.ok){ setPortalStatus('err', data.detail || 'Invalid portal credentials'); return; }
+      sessionStorage.setItem('gp_token', data.token);
+      sessionStorage.setItem('gp_api_base', API_BASE);
+      setPortalStatus('ok','Signed in');
+      // show connect block
+      $('portal-login').style.display='none';
+      $('connect-block').style.display='block';
+    }catch(err){ setPortalStatus('err','Network error reaching backend'); }
+    finally{ btn.disabled=false; }
+  });
+
+  function connectFormSubmit(formId, endpoint, statusId){
+    const form = document.getElementById(formId);
+    form.addEventListener('submit', async (e)=>{
+      e.preventDefault(); const btn = form.querySelector('button'); btn.disabled = true; const statusEl = document.getElementById(statusId); statusEl.className='status show pending'; statusEl.textContent='Connecting…';
+      try{
+        const body = {};
+        if(formId==='jump-form'){
+          body.host = $('jump-host').value; body.username = $('jump-user').value; body.first_factor = $('jump-f1').value; body.second_factor = $('jump-f2').value;
+        } else {
+          body.host = $('direct-host').value; body.username = $('direct-user').value; body.password = $('direct-pass').value;
+        }
+        const res = await fetch(`${API_BASE}/${endpoint}`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Token ${sessionStorage.getItem('gp_token')}`},body:JSON.stringify(body)});
+        const data = await parseJson(res);
+        if(!res.ok){ statusEl.className='status show err'; statusEl.textContent = data.detail || 'Connection failed'; return; }
+        // success
+        sessionStorage.setItem('gp_session_id', data.session_id);
+        sessionStorage.setItem('gp_current_host', data.current_host || '');
+        // move to the connected workspace next
+        document.getElementById('connect-block').style.display='none';
+        const last = sessionStorage.getItem('gp_last_target_page') || '';
+        if(last){ sessionStorage.setItem('gp_target_page', last); }
+        window.location.href = 'workspace.html';
+      }catch(err){ statusEl.className='status show err'; statusEl.textContent = err.message; }
+      finally{ btn.disabled=false; }
+    });
+  }
+
+  connectFormSubmit('jump-form','connect/jump/','status-jump');
+  connectFormSubmit('direct-form','connect/direct/','status-direct');
+
+  // if already connected, jump straight to the workspace
+  if(sessionStorage.getItem('gp_session_id')){
+    document.getElementById('portal-login').style.display='none';
+    document.getElementById('connect-block').style.display='none';
+    window.location.href = 'workspace.html';
+  }
+</script>
 </body>
 </html>

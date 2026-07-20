@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Postgres Rights — Grant Portal</title>
+<link rel="stylesheet" href="postgres.css">
+</head>
+<body>
+<div class="page">
+  <header class="nav">
+    <div class="brand">Grant <span>Portal</span></div>
+    <nav>
+      <a href="../index.html">Home</a>
+      <a href="../profile.html">Profile</a>
+      <a href="../informix/informix.html">Informix</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <h1>Postgres rights</h1>
+    <p>This rights page is ready for future implementation. For now you can record the request audit details.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Audit request</h2>
+    <p class="notice">Capture the approver and ticket before the rights workflow is built out.</p>
+    <div class="field">
+      <label for="granter-name">Granter name</label>
+      <input id="granter-name" list="granter-options" placeholder="Select or type a granter name">
+      <datalist id="granter-options">
+        <option value="DB Team Alpha"></option>
+        <option value="DB Team Beta"></option>
+        <option value="DB Team Gamma"></option>
+        <option value="DB Team Delta"></option>
+      </datalist>
+    </div>
+    <div class="field">
+      <label for="jira-ticket">DB JIRA ticket</label>
+      <input id="jira-ticket" placeholder="PROJ-1234">
+    </div>
+    <div class="field">
+      <label for="request-ts">Request date & time</label>
+      <input id="request-ts" readonly>
+    </div>
+    <div class="button-row">
+      <button id="btn-save-request" class="button primary">Save audit request</button>
+      <a class="button secondary" href="../index.html">Back to home</a>
+    </div>
+    <div id="status-request" class="status"></div>
+  </section>
+</div>
+<script>
+const token = sessionStorage.getItem("gp_token");
+const API_BASE = sessionStorage.getItem("gp_api_base") || "http://127.0.0.1:8000/api";
+const $ = (id) => document.getElementById(id);
+function formatDateTime(){ return new Date().toISOString().slice(0,19).replace('T',' '); }
+function setStatus(id, kind, text){ const el=$(id); el.className = `status show ${kind}`; el.textContent = text; }
+function initTimestamp(){ $("request-ts").value=formatDateTime(); }
+function requireLogin(){ if(!token) window.location.href = `../login.html?next=postgres/postgres.html`; else { sessionStorage.setItem("gp_target_page", "postgres/postgres.html"); sessionStorage.setItem("gp_db_type", "postgres"); } }
+async function saveAuditRequest(){
+  const granterName=$("granter-name").value.trim();
+  const jiraTicket=$("jira-ticket").value.trim();
+  if(!granterName){ setStatus("status-request","err","Granter name is required."); return; }
+  if(!jiraTicket){ setStatus("status-request","err","JIRA ticket is required."); return; }
+  const btn=$("btn-save-request"); btn.disabled=true; setStatus("status-request","pending","Saving audit request...");
+  try{
+    const res=await fetch(`${API_BASE}/audit/request/`,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Token ${token}`},body:JSON.stringify({rights_type:"postgres",granter_name:granterName,jira_ticket:jiraTicket})});
+    const data=await res.json(); if(!res.ok) throw new Error(data.detail||"Failed to save request.");
+    setStatus("status-request","ok",`Saved request ${data.id} at ${formatDateTime()}`);
+  }catch(err){setStatus("status-request","err",err.message);}finally{btn.disabled=false;}
+}
+$("btn-save-request").addEventListener("click",async(e)=>{e.preventDefault();await saveAuditRequest();});
+initTimestamp();requireLogin();
+</script>
+</body>
+</html>

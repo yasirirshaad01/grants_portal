@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grant Portal — Sign In</title>
+<link rel="stylesheet" href="login.css">
+</head>
+<body class="login-page">
+<div class="page" style="max-width:920px;">
+  <div class="titlebar" style="justify-content:space-between;gap:0;">
+    <div style="display:flex;align-items:center;gap:8px;"><div class="dot r"></div><div class="dot y"></div><div class="dot g"></div><span class="label">grant-portal · sign in</span></div>
+    <a href="index.html" style="color:var(--accent);text-decoration:none;font-size:13px;">Back to home</a>
+  </div>
+  <div class="panel">
+    <div class="hero">
+      <h1>Sign in to the portal</h1>
+      <p>Use your portal credentials to continue. After successful sign-in, connect to the server and then choose the rights workflow you want to open.</p>
+    </div>
+
+    <div id="portal-status" class="status"></div>
+    <form id="portal-login" class="form">
+      <div class="field"><label for="pu">Portal username</label><input id="pu" type="text" autocomplete="username" required></div>
+      <div class="field"><label for="pp">Portal password</label><input id="pp" type="password" autocomplete="current-password" required></div>
+      <button class="run" type="submit">Sign in</button>
+    </form>
+
+    <div id="connect-block" class="form" style="display:none;margin-top:18px;">
+      <h1 style="margin-top:0;">Connect to server</h1>
+      <p class="sub">After signing in, you can open an SSH session to the jump server or a direct trusted host before running Informix rights steps.</p>
+
+      <div id="connect-grid">
+        <form id="jump-form" style="padding:12px;">
+          <h3 style="margin-top:0;color:var(--accent);">Jump Server</h3>
+          <div class="field"><label for="jump-host">Jump server</label><select id="jump-host"><option value="10.11.82.50">10.11.82.50</option><option value="10.11.82.51">10.11.82.51</option></select></div>
+          <div class="field"><label for="jump-user">Username</label><input id="jump-user" type="text" placeholder="yarfat" required></div>
+          <div class="row2" style="display:flex;gap:10px;"><div class="field" style="flex:1;"><label for="jump-f1">First factor</label><input id="jump-f1" type="password" required></div><div class="field" style="flex:1;"><label for="jump-f2">Second factor</label><input id="jump-f2" type="password" required></div></div>
+          <div style="margin-top:8px;"><button class="run" type="submit">Connect</button></div>
+        </form>
+
+        <form id="direct-form" style="padding:12px;">
+          <h3 style="margin-top:0;color:var(--accent);">Direct Trusted Host</h3>
+          <div class="field"><label for="direct-host">Trusted host</label><select id="direct-host"><option value="10.11.56.185">10.11.56.185 (superuser)</option></select></div>
+          <div class="field"><label for="direct-user">Username</label><input id="direct-user" type="text" placeholder="informix" required></div>
+          <div class="field"><label for="direct-pass">Password</label><input id="direct-pass" type="password" required></div>
+          <div style="margin-top:8px;"><button class="run" type="submit">Connect</button></div>
+        </form>
+      </div>
+
+      <div id="status" class="status"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE = "http://127.0.0.1:8000/api";
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(window.location.search);
+const requestedPage = (params.get("next") || "").trim();
+const requestedDb = (params.get("db") || "").trim().toLowerCase();
+const supportedPages = {
+  "informix/informix.html": "informix/informix.html",
+  "mysql/mysql.html": "mysql/mysql.html",
+  "greenplum/greenplum.html": "greenplum/greenplum.html",
+  "postgres/postgres.html": "postgres/postgres.html"
+};
+
+function isDatabasePage(page) {
+  return Object.values(supportedPages).includes(page);
+}
+
+function getDbType(page) {
+  if (page.includes("mysql")) return "mysql";
+  if (page.includes("greenplum")) return "greenplum";
+  if (page.includes("postgres")) return "postgres";
+  return "informix";
+}
+
+function resolveTargetPage(username, fallbackPage) {
+  const userName = (username || "").toLowerCase();
+  if (requestedDb === "mysql") return "mysql/mysql.html";
+  if (requestedDb === "greenplum") return "greenplum/greenplum.html";
+  if (requestedDb === "postgres") return "postgres/postgres.html";
+  if (requestedDb === "informix") return "informix/informix.html";
+  if (fallbackPage && supportedPages[fallbackPage]) return supportedPages[fallbackPage];
+  if (userName.includes("mysql")) return "mysql/mysql.html";
+  if (userName.includes("greenplum") || userName.includes("gp")) return "greenplum/greenplum.html";
+  if (userName.includes("postgres") || userName.includes("pg")) return "postgres/postgres.html";
+  if (userName.includes("informix") || userName.includes("inf")) return "informix/informix.html";
+  return supportedPages[fallbackPage] || "informix/informix.html";
+}
+
+let nextPage = requestedPage || "informix/informix.html";
+let needsConnect = isDatabasePage(nextPage);
+
+function setStatus(kind, text, withCursor) {
+  const el = $("status");
+  if (!el) return; // connection status area may not exist when hidden
+  el.className = "status show " + kind;
+  el.textContent = text;
+  if (withCursor) {
+    const c = document.createElement("span");
+    c.className = "cursor";
+    el.appendChild(c);
+  }
+}
+
+function setPortalStatus(kind, text, withCursor) {
+  const el = $("portal-status");
+  if (!el) return;
+  el.className = "status show " + kind;
+  el.textContent = text;
+  if (withCursor) {
+    const c = document.createElement("span");
+    c.className = "cursor";
+    el.appendChild(c);
+  }
+}
+
+function savePortalUser(username) {
+  sessionStorage.setItem("gp_portal_user", username);
+}
+
+function onPortalSignedIn(token, username) {
+  sessionStorage.setItem("gp_token", token);
+  sessionStorage.setItem("gp_api_base", API_BASE);
+  savePortalUser(username);
+
+  const resolvedPage = resolveTargetPage(username, nextPage);
+  nextPage = resolvedPage;
+  needsConnect = isDatabasePage(resolvedPage);
+  sessionStorage.setItem("gp_target_page", resolvedPage);
+  sessionStorage.setItem("gp_db_type", getDbType(resolvedPage));
+
+  if (!needsConnect) {
+    window.location.href = resolvedPage;
+    return;
+  }
+  $("portal-login").style.display = "none";
+  $("connect-block").style.display = "block";
+}
+
+function parseJson(response) {
+  return response.json().catch(() => ({}));
+}
+
+$("portal-login").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  setPortalStatus("pending", "Signing in…", true);
+  try {
+    const res = await fetch(`${API_BASE}/auth/login/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("pu").value, password: $("pp").value })
+    });
+    const data = await parseJson(res);
+    if (!res.ok) {
+      setPortalStatus("err", data.detail || "Invalid portal credentials");
+      return;
+    }
+    onPortalSignedIn(data.token, $("pu").value);
+  } catch (err) {
+    setPortalStatus("err", "Network error reaching backend");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Tabs removed: connect forms are shown side-by-side now.
+
+function connectSuccess(data) {
+  setStatus("ok", `Connected · session ${data.session_id}\nhost: ${data.current_host}\nready for next step`);
+  sessionStorage.setItem("gp_session_id", data.session_id);
+  sessionStorage.setItem("gp_current_host", data.current_host || "");
+  const targetPage = sessionStorage.getItem("gp_target_page") || nextPage;
+  sessionStorage.setItem("gp_last_target_page", targetPage);
+  window.location.href = "workspace.html";
+}
+
+$("jump-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  setStatus("pending", "Authenticating against jump server", true);
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/connect/jump/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Token ${sessionStorage.getItem("gp_token")}` },
+      body: JSON.stringify({ host: $("jump-host").value, username: $("jump-user").value, first_factor: $("jump-f1").value, second_factor: $("jump-f2").value })
+    });
+    const data = await parseJson(res);
+    if (!res.ok) {
+      setStatus("err", data.detail || "Access denied");
+      return;
+    }
+    connectSuccess(data);
+  } catch (err) {
+    setStatus("err", "Network error reaching backend");
+  } finally {
+    btn.disabled = false;
+    $("jump-f1").value = "";
+    $("jump-f2").value = "";
+  }
+});
+
+$("direct-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  setStatus("pending", "Authenticating against trusted host", true);
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/connect/direct/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Token ${sessionStorage.getItem("gp_token")}` },
+      body: JSON.stringify({ host: $("direct-host").value, username: $("direct-user").value, password: $("direct-pass").value })
+    });
+    const data = await parseJson(res);
+    if (!res.ok) {
+      setStatus("err", data.detail || "Authentication failed");
+      return;
+    }
+    connectSuccess(data);
+  } catch (err) {
+    setStatus("err", "Network error reaching backend");
+  } finally {
+    btn.disabled = false;
+    $("direct-pass").value = "";
+  }
+});
+
+if (!needsConnect) {
+  $("connect-block").style.display = "none";
+}
+</script>
+</body>
+</html>

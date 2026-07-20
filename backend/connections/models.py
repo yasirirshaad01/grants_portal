@@ -54,3 +54,28 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"[{self.timestamp}] {self.portal_user} {self.action} ({self.status})"
+
+
+class GrantRequest(models.Model):
+    INFORMIX = "informix"
+    MYSQL = "mysql"
+    GREENPLUM = "greenplum"
+    POSTGRES = "postgres"
+    RIGHTS_CHOICES = [
+        (INFORMIX, "Informix"),
+        (MYSQL, "MySQL"),
+        (GREENPLUM, "Greenplum"),
+        (POSTGRES, "Postgres"),
+    ]
+
+    portal_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    rights_type = models.CharField(max_length=20, choices=RIGHTS_CHOICES)
+    granter_name = models.CharField(max_length=150)
+    jira_ticket = models.CharField(max_length=64)
+    requested_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-requested_at"]
+
+    def __str__(self):
+        return f"{self.rights_type} request by {self.granter_name} ({self.jira_ticket})"

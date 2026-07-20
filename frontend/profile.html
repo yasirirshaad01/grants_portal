@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grant Portal — Profile</title>
+<link rel="stylesheet" href="profile.css">
+</head>
+<body>
+<div class="page">
+  <header class="navbar">
+    <div class="brand">Grant <span>Portal</span></div>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="informix/informix.html">Informix</a>
+      <a href="mysql/mysql.html">MySQL</a>
+    </nav>
+  </header>
+
+  <section class="panel">
+    <h1>User Profile</h1>
+    <p>Audit-ready access control requests begin with a portal identity and a documented approver. This profile page is a starting point for the user experience.</p>
+
+    <div class="stats">
+      <div class="stat"><h3>Assigned user</h3><p id="user-name">—</p></div>
+      <div class="stat"><h3>Active session</h3><p id="session-status">Not connected</p></div>
+    </div>
+
+    <div class="card">
+      <h2>Current portal context</h2>
+      <ul>
+        <li>Portal user name loaded from login session storage</li>
+        <li>Current backend host is shown after connection</li>
+        <li>Requests are saved to SQLite audit history for now</li>
+      </ul>
+      <div class="button-row">
+        <a class="button" href="login.html">Sign in</a>
+        <a class="button secondary" href="index.html">Back to home</a>
+      </div>
+    </div>
+  </section>
+</div>
+<script>
+const user = sessionStorage.getItem("gp_portal_user") || "Guest";
+document.getElementById("user-name").textContent = user;
+const currentHost = sessionStorage.getItem("gp_current_host") || "None";
+document.getElementById("session-status").textContent = currentHost === "" ? "Not connected" : `Connected to ${currentHost}`;
+</script>
+</body>
+</html>
