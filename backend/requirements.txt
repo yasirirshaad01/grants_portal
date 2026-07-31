@@ -2,3 +2,4 @@ Django>=5.0,<5.2
 djangorestframework>=3.15
 paramiko>=3.4
 django-cors-headers>=4.4
+pyodbc>=5.0

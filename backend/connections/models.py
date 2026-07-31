@@ -1,3 +1,4 @@
+import datetime
 import uuid
 
 from django.conf import settings
@@ -79,3 +80,31 @@ class GrantRequest(models.Model):
 
     def __str__(self):
         return f"{self.rights_type} request by {self.granter_name} ({self.jira_ticket})"
+
+
+class EngUserRights(models.Model):
+    user_id = models.CharField(max_length=30, primary_key=True)
+    user_password = models.CharField(max_length=255)
+    user_created = models.DateField(default=datetime.date.today)
+
+    class Meta:
+        db_table = "eng_user_rights"
+
+    def __str__(self):
+        return self.user_id
+
+
+class EngUserRightsDetail(models.Model):
+    user_id = models.CharField(max_length=30)
+    env_scr = models.CharField(max_length=30)
+    db_name = models.CharField(max_length=30)
+    user_created = models.DateField(default=datetime.date.today)
+
+    class Meta:
+        db_table = "eng_user_rights_detail"
+        constraints = [
+            models.UniqueConstraint(fields=("user_id", "env_scr", "db_name"), name="pk_urd"),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id}@{self.env_scr}:{self.db_name}"

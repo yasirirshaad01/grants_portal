@@ -13,6 +13,10 @@ gates a grant - eyeball the raw output too until you're confident.
 """
 
 import re
+import secrets
+import string
+import pyodbc
+from django.conf import settings
 
 
 def build_env_prefixed_command(env_script, command):
@@ -63,6 +67,19 @@ def build_user_lookup_sql(username):
     return f"select username, usertype, priority, defrole from sysusers where username = '{safe}';"
 
 
+def build_create_user_statement(username, password):
+    safe_user = _escape(username)
+    safe_password = password.replace('"', '\\"')
+    return (
+        f'CREATE USER {safe_user} WITH PASSWORD "{safe_password}" PROPERTIES USER ifx_guest '
+        f'HOME "/home/{safe_user}";'
+    )
+
+
+def build_dbaccess_sql_command(db_name, sql):
+    return f"cat <<'EOF' | dbaccess {db_name} -\n{sql}\nEOF"
+
+
 def build_grant_statements(usernames, grants, roles):
     """
     usernames: a single username string or a list of strings
@@ -88,6 +105,71 @@ def build_grant_statements(usernames, grants, roles):
             statements.append(f"grant default role {safe_role} to {safe_user};")
 
     return statements
+
+
+def generate_strong_password(length=15):
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
+    while True:
+        pwd = ''.join(secrets.choice(alphabet) for _ in range(length))
+        if (any(c.islower() for c in pwd)
+                and any(c.isupper() for c in pwd)
+                and any(c.isdigit() for c in pwd)
+                and any(c in "!@#$%^&*()-_=+" for c in pwd)):
+            return pwd
+
+
+def get_informix_odbc_connection():
+    conn_str = settings.INFORMIX_ODBC_CONNECTION
+    return pyodbc.connect(conn_str)
+
+
+def get_or_create_informix_user_password(username):
+    username = (username or "").strip()
+    if not username:
+        raise ValueError("username is required")
+    with get_informix_odbc_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "select user_password from eng_user_rights where user_id = ?",
+            (username,),
+        )
+        row = cursor.fetchone()
+        if row and row[0]:
+            return row[0]
+
+        password = generate_strong_password()
+        if row:
+            cursor.execute(
+                "update eng_user_rights set user_password = ? where user_id = ?",
+                (password, username),
+            )
+        else:
+            cursor.execute(
+                "insert into eng_user_rights (user_id, user_password) values (?, ?)",
+                (username, password),
+            )
+        conn.commit()
+        return password
+
+
+def ensure_informix_user_rights_detail(user_id, env_scr, db_name):
+    user_id = (user_id or "").strip()
+    env_scr = (env_scr or "").strip()[:30]
+    db_name = (db_name or "").strip()[:30]
+    if not user_id or not db_name:
+        raise ValueError("user_id and db_name are required")
+    with get_informix_odbc_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "select 1 from eng_user_rights_detail where user_id = ? and env_scr = ? and db_name = ?",
+            (user_id, env_scr, db_name),
+        )
+        if not cursor.fetchone():
+            cursor.execute(
+                "insert into eng_user_rights_detail (user_id, env_scr, db_name) values (?, ?, ?)",
+                (user_id, env_scr, db_name),
+            )
+            conn.commit()
 
 
 def parse_onstat_summary(output):

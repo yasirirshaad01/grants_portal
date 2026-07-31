@@ -130,3 +130,15 @@ TRUSTED_HOP_PRIVATE_KEY_PASSPHRASE = (
     or os.environ.get("TRUSTED_HOP_PRIVATE_KEY_PASSPHRASE")
     or None
 )
+
+INFORMIX_ODBC_CONNECTION = os.environ.get(
+    "GP_INFORMIX_ODBC_CONNECTION",
+    "DRIVER={IBM INFORMIX ODBC DRIVER (64-bit)};"
+    "HOST=10.11.56.182;"
+    "SERVER=inst0000_41;"
+    "SERVICE=2043;"
+    "PROTOCOL=onsoctcp;"
+    "DATABASE=db_monitoring;"
+    "UID=informix;"
+    "PWD=Aug01/Sat/2026;"
+)

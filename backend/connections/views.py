@@ -11,6 +11,7 @@ project README.
 """
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -50,6 +51,24 @@ def _get_owned_session(request, session_id):
         return None, None
     manager = ACTIVE_SESSIONS.get(str(session_id))
     return session, manager
+
+
+def _get_saved_user_password(username):
+    return dbops.get_or_create_informix_user_password(username)
+
+
+def _ensure_user_rights_detail(user_id, env_scr, db_name):
+    dbops.ensure_informix_user_rights_detail(user_id, env_scr, db_name)
+
+
+def _existing_informix_users(session, manager, db_name, usernames):
+    if not usernames:
+        return set()
+    sql = dbops.build_user_lookup_sql(usernames)
+    cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db_name, sql))
+    result = manager.run(cmd)
+    rows = dbops.parse_pipe_separated(result["stdout"])
+    return {row.split()[0] for row in rows if row}
 
 
 class JumpServerConnectView(APIView):
@@ -310,7 +329,7 @@ class DatabaseListView(APIView):
             return Response({"detail": "Load an environment first"}, status=status.HTTP_409_CONFLICT)
 
         sql = dbops.build_list_databases_sql()
-        cmd = dbops.build_silent_env_prefixed_command(session.env_script, f'echo "{sql}" | dbaccess sysmaster -')
+        cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command("sysmaster", sql))
         result = manager.run(cmd)
 
         return Response({
@@ -333,7 +352,7 @@ class RoleListView(APIView):
             return Response({"detail": "Load an environment first"}, status=status.HTTP_409_CONFLICT)
 
         sql = dbops.build_list_roles_sql()
-        cmd = dbops.build_silent_env_prefixed_command(session.env_script, f'echo "{sql}" | dbaccess {db_name} -')
+        cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db_name, sql))
         result = manager.run(cmd)
 
         return Response({
@@ -360,7 +379,7 @@ class UserLookupView(APIView):
             return Response({"detail": "username is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         sql = dbops.build_user_lookup_sql(usernames)
-        cmd = dbops.build_silent_env_prefixed_command(session.env_script, f'echo "{sql}" | dbaccess {db_name} -')
+        cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db_name, sql))
         result = manager.run(cmd)
         rows = dbops.parse_pipe_separated(result["stdout"])
         found_usernames = {row.split()[0] for row in rows if row}
@@ -387,7 +406,14 @@ class GrantPreviewView(APIView):
         usernames = request.data.get("usernames") or request.data.get("username")
         grants = request.data.get("grants", [])
         roles = request.data.get("roles", [])
+        db_names = request.data.get("db_names") or []
+        db_name = (request.data.get("db_name") or "").strip()
+        session_id = request.data.get("session_id")
 
+        if isinstance(db_names, str):
+            db_names = [d.strip() for d in db_names.split(",") if d.strip()]
+        if db_name:
+            db_names = [db_name] if not db_names else db_names
         if isinstance(usernames, str):
             usernames = [u.strip() for u in usernames.split(",") if u.strip()]
         if not usernames:
@@ -397,7 +423,22 @@ class GrantPreviewView(APIView):
         if not statements:
             return Response({"detail": "No grants or roles selected"}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"statements": statements})
+        created_user_statements = []
+        if session_id and db_names:
+            session, manager = _get_owned_session(request, session_id)
+            if session and manager and session.env_script:
+                existing_users = _existing_informix_users(session, manager, db_names[0], usernames)
+                missing_users = [u for u in usernames if u not in existing_users]
+                created_user_statements = [
+                    dbops.build_create_user_statement(username, _get_saved_user_password(username))
+                    for username in missing_users
+                ]
+
+        combined = created_user_statements + statements if created_user_statements else statements
+        response = {"statements": combined}
+        if created_user_statements:
+            response["created_user_statements"] = created_user_statements
+        return Response(response)
 
 
 # ----------------------------------------------------------------------
@@ -436,12 +477,26 @@ class GrantExecuteView(APIView):
         ordered = connects + others
         sql_block = "\n".join(ordered)
 
+        user_passwords = {
+            username: _get_saved_user_password(username)
+            for username in usernames
+        }
+
         results = []
         overall_ok = True
         for db in db_names:
-            cmd = dbops.build_silent_env_prefixed_command(session.env_script, f'echo "{sql_block}" | dbaccess {db} -')
-            result = manager.run(cmd)
-            ok = result["exit_code"] == 0 and "error" not in result["stdout"].lower() and "error" not in result["stderr"].lower()
+            existing_users = _existing_informix_users(session, manager, db, usernames)
+            create_user_statements = []
+            for username in usernames:
+                if username not in existing_users:
+                    create_user_statements.append(
+                        dbops.build_create_user_statement(username, user_passwords[username])
+                    )
+            ordered = create_user_statements + connects + others
+            sql_block = "\n".join(ordered)
+
+            result = manager.run(dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db, sql_block)))
+            ok = result["exit_code"] == 0
             overall_ok = overall_ok and ok
             results.append({
                 "db_name": db,
@@ -449,7 +504,12 @@ class GrantExecuteView(APIView):
                 "stdout": result["stdout"],
                 "stderr": result["stderr"],
                 "ok": ok,
+                "created_users": create_user_statements,
+                "sql": sql_block,
             })
+
+            for username in usernames:
+                _ensure_user_rights_detail(username, session.env_script, db)
 
         AuditLog.objects.create(
             session=session, portal_user=request.user, action="grant_execute",
@@ -459,10 +519,18 @@ class GrantExecuteView(APIView):
             status="success" if overall_ok else "failed",
         )
 
+        detail = None
+        if not overall_ok:
+            failed = next((r for r in results if not r["ok"]), None)
+            if failed:
+                detail = failed.get("stderr") or failed.get("stdout") or "Execution failed"
+
         payload = {
             "status": "executed" if overall_ok else "error",
             "executed_sql": sql_block,
             "results": results,
+            "debug": results,
+            "detail": detail,
         }
         return Response(payload, status=status.HTTP_200_OK if overall_ok else status.HTTP_400_BAD_REQUEST)
 
@@ -497,7 +565,7 @@ class GrantVerifyView(APIView):
         combined_stdout = []
         for db in db_names:
             sql = dbops.build_user_lookup_sql(usernames)
-            cmd = dbops.build_silent_env_prefixed_command(session.env_script, f'echo "{sql}" | dbaccess {db} -')
+            cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db, sql))
             result = manager.run(cmd)
             rows = dbops.parse_pipe_separated(result["stdout"])
             combined_stdout.append(result["stdout"])

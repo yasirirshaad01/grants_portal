@@ -201,6 +201,7 @@ this is different per instance, there's no fixed default. Example: <code>. /mcp_
       <pre id="preview-sql" class="sql-block"></pre>
       <button id="btn-execute">Execute</button>
       <div id="status-preview" class="status"></div>
+      <div id="user-action-summary" class="status" style="margin-top:10px; display:none;"></div>
     </div>
   </section>
 
@@ -320,21 +321,38 @@ function openProgressSection(id){
   openSection(id);
 }
 
+function cancelPendingReset(){
+  if (resetTimerId !== null) {
+    clearTimeout(resetTimerId);
+    resetTimerId = null;
+  }
+}
+
 function resetToEnvironmentLoad(){
+  cancelPendingReset();
   ["sec-audit","sec-db","sec-role","sec-user","sec-grant","sec-preview","sec-verify"].forEach(closeSection);
   openSection("sec-env");
   activatePill("env");
   auditSaved = false;
   selectedDb = null;
   selectedDbs = [];
+  selectedDbsByEnv = {};
+  selectedEnvScripts = [];
   executeLogs = [];
   document.querySelectorAll('.chip.selected').forEach(c => c.classList.remove('selected'));
   document.querySelectorAll('.status.show').forEach(s => s.className = 'status');
   document.querySelectorAll('.out.open').forEach(o => o.classList.remove('open'));
   $("execute-log").textContent = "";
+  const actionEl = $("user-action-summary");
+  if (actionEl) {
+    actionEl.style.display = "none";
+    actionEl.textContent = "";
+  }
   renderExecuteLogButton();
   $("role-db-name").textContent = "—";
   $("db-selected-info").style.display = "none";
+  updateEnvSelectionInfo();
+  updateDbSelectionInfo();
 }
 
 function wireRawToggle(toggleId, preId){
@@ -589,6 +607,7 @@ let selectedDbsByEnv = {};
 let selectedEnvScripts = [];
 let auditSaved = false;
 let executeLogs = [];
+let resetTimerId = null;
 
 function updateEnvSelectionInfo() {
   const info = $("env-selected-info");
@@ -660,12 +679,17 @@ function formatExecutionLogs() {
   if (!executeLogs.length) return "(no execution logs)";
   return executeLogs.map(entry => {
     const heading = `-- ${entry.env_script} · ${entry.status.toUpperCase()}${entry.message ? ` (${entry.message})` : ""}`;
-    const bodyLines = (entry.results || []).map(r => {
-      if (typeof r === "string") return r;
-      if (r.raw_stdout) return r.raw_stdout;
-      if (r.message) return r.message;
-      return JSON.stringify(r);
-    }).filter(Boolean);
+    const bodyLines = [
+      ...(entry.results || []).map(r => {
+        if (typeof r === "string") return r;
+        if (r.raw_stdout) return r.raw_stdout;
+        if (r.stderr) return `stderr: ${r.stderr}`;
+        if (r.stdout) return `stdout: ${r.stdout}`;
+        if (r.message) return r.message;
+        return JSON.stringify(r);
+      }).filter(Boolean),
+      entry.debug ? `debug: ${JSON.stringify(entry.debug, null, 2)}` : null,
+    ].filter(Boolean);
     return [heading, ...bodyLines].join("\n");
   }).join("\n\n");
 }
@@ -862,6 +886,7 @@ $("btn-load-env").addEventListener("click", async () => {
     setStatus("status-env", "err", "Enter the environment script for this instance — there's no default.");
     return;
   }
+  cancelPendingReset();
   const btn = $("btn-load-env");
   btn.disabled = true;
   setStatus("status-env", "pending", `Sourcing ${envScript}…`);
@@ -892,6 +917,7 @@ $("btn-load-env").addEventListener("click", async () => {
 
 // ---- List databases ----
 $("btn-load-db").addEventListener("click", async () => {
+  cancelPendingReset();
   const btn = $("btn-load-db");
   btn.disabled = true;
   setStatus("status-db", "pending", "Querying sysdatabases for selected instances…");
@@ -939,6 +965,7 @@ $("btn-load-roles").addEventListener("click", async () => {
   const instances = Object.keys(selectedDbsByEnv).filter(env => selectedDbsByEnv[env].length);
   if (!instances.length) { setStatus("status-role", "err", "Select at least one database first."); return; }
 
+  cancelPendingReset();
   const btn = $("btn-load-roles");
   btn.disabled = true;
   setStatus("status-role", "pending", "Querying sysroles for selected instances…");
@@ -1030,11 +1057,32 @@ $("btn-preview").addEventListener("click", async () => {
   try {
     const data = await api("/grants/preview/", {
       method: "POST",
-      body: JSON.stringify({ usernames, grants, roles })
+      body: JSON.stringify({
+        session_id: sessionId,
+        usernames,
+        grants,
+        roles,
+        env_script: getSelectedDbs().length ? `. /${selectedEnvScripts[0]}` : "",
+        db_name: getSelectedDbForLookup() || "",
+      })
     });
     $("preview-sql").textContent = data.statements.join("\n");
     const selectedDbs = getSelectedDbs();
     setStatus("status-grant", "ok", `Preview ready for ${usernames.length} user${usernames.length === 1 ? "" : "s"} across ${selectedDbs.length} database${selectedDbs.length === 1 ? "" : "s"}.`);
+    const actionSummary = (data.user_actions || []).reduce((acc, item) => {
+      acc[item.status] = (acc[item.status] || 0) + 1;
+      return acc;
+    }, {});
+    const summaryParts = [];
+    if (actionSummary.created) summaryParts.push(`${actionSummary.created} user${actionSummary.created === 1 ? "" : "s"} will be created`);
+    if (actionSummary.reused) summaryParts.push(`${actionSummary.reused} user${actionSummary.reused === 1 ? "" : "s"} will reuse an existing password`);
+    if (actionSummary.existing) summaryParts.push(`${actionSummary.existing} existing user${actionSummary.existing === 1 ? "" : "s"}`);
+    const actionText = summaryParts.length ? summaryParts.join(" and ") : "No user action details available.";
+    const actionEl = $("user-action-summary");
+    if (actionEl) {
+      actionEl.style.display = "block";
+      actionEl.textContent = actionText;
+    }
     markPillDone("grant");
     activatePill("preview");
     openProgressSection("sec-preview");
@@ -1082,39 +1130,73 @@ $("btn-execute").addEventListener("click", async () => {
 
       try {
         setStatus("status-preview", "pending", `Executing grants on ${envScript}…`);
-        const data = await api("/grants/execute/", {
-          method: "POST",
-          body: JSON.stringify({ session_id: sessionId, db_names: dbNames, usernames, grants, roles })
-        });
-        overallResults.push({ env_script: envScript, status: data.status, results: data.results || [] });
-        if (data.status === "executed") anySuccess = true;
-      } catch (err) {
-        overallResults.push({ env_script: envScript, status: "error", message: err.message });
+            let data;
+            try {
+              data = await api("/grants/execute/", {
+                method: "POST",
+                body: JSON.stringify({ session_id: sessionId, db_names: dbNames, usernames, grants, roles })
+              });
+            } catch (err) {
+              if (err.responseData && (err.responseData.status || err.responseData.results || err.responseData.user_actions)) {
+                data = err.responseData;
+              } else {
+                throw err;
+              }
+            }
+            overallResults.push({
+              env_script: envScript,
+              status: data.status,
+              results: data.results || [],
+              user_actions: data.user_actions || [],
+              message: data.status === "error" ? (data.detail || data.status) : undefined,
+              debug: data.debug,
+            });
+            if (data.status === "executed") anySuccess = true;
+          } catch (err) {
+            overallResults.push({ env_script: envScript, status: "error", message: err.message });
+          }
+        }
+
+        const summary = overallResults.map(r => `${r.env_script}: ${r.status}${r.message ? ` (${r.message})` : ""}`).join(" | ");
+        const failures = overallResults.filter(r => r.status !== "executed");
+        const failureDetails = failures.map(r => `${r.env_script}: ${r.message || "failed"}`).join("; ");
+        const totalDbs = getSelectedDbs().length;
+        const successful = overallResults.filter(r => r.status === "executed").length;
+        const failed = failures.length;
+        const skipped = overallResults.filter(r => r.status === "skipped").length;
+        const statusKind = successful ? "ok" : "err";
+        const summaryText = `Processed ${instances.length} instance${instances.length === 1 ? "" : "s"}: ${successful} succeeded, ${failed} failed, ${skipped} skipped across ${totalDbs} database${totalDbs === 1 ? "" : "s"}.`;
+        setStatus("status-preview", statusKind, `${summaryText} ${summary}${failureDetails ? ` Failed instances: ${failureDetails}` : ""}`);
+        executeLogs = overallResults;
+        updateExecuteLogDisplay();
+
+        const actionSummary = overallResults
+          .flatMap(r => r.user_actions || [])
+          .reduce((acc, item) => {
+            acc[item.status] = (acc[item.status] || 0) + 1;
+            return acc;
+          }, {});
+
+        const summaryParts = [];
+        if (actionSummary.created) summaryParts.push(`${actionSummary.created} user${actionSummary.created === 1 ? "" : "s"} created`);
+        if (actionSummary.reused) summaryParts.push(`${actionSummary.reused} user${actionSummary.reused === 1 ? "" : "s"} reused`);
+        if (actionSummary.existing) summaryParts.push(`${actionSummary.existing} existing user${actionSummary.existing === 1 ? "" : "s"}`);
+        const actionText = summaryParts.length ? summaryParts.join(" and ") : "No user action details available.";
+        const actionEl = $("user-action-summary");
+        if (actionEl) {
+          actionEl.style.display = "block";
+          actionEl.textContent = actionText;
+        }
+
+        if (successful) {
+          markPillDone("preview");
+          activatePill("verify");
+          openProgressSection("sec-verify");
+        }
+      } finally {
+        btn.disabled = false;
       }
-    }
-
-    const summary = overallResults.map(r => `${r.env_script}: ${r.status}${r.message ? ` (${r.message})` : ""}`).join(" | ");
-    const failures = overallResults.filter(r => r.status === "error");
-    const failureDetails = failures.map(r => `${r.env_script}: ${r.message}`).join("; ");
-    const totalDbs = getSelectedDbs().length;
-    const successful = overallResults.filter(r => r.status === "executed").length;
-    const failed = failures.length;
-    const skipped = overallResults.filter(r => r.status === "skipped").length;
-    const statusKind = successful ? "ok" : "err";
-    const summaryText = `Processed ${instances.length} instance${instances.length === 1 ? "" : "s"}: ${successful} succeeded, ${failed} failed, ${skipped} skipped across ${totalDbs} database${totalDbs === 1 ? "" : "s"}.`;
-    setStatus("status-preview", statusKind, `${summaryText} ${summary}${failureDetails ? ` Failed instances: ${failureDetails}` : ""}`);
-    executeLogs = overallResults;
-    updateExecuteLogDisplay();
-
-    if (successful) {
-      markPillDone("preview");
-      activatePill("verify");
-      openProgressSection("sec-verify");
-    }
-  } finally {
-    btn.disabled = false;
-  }
-});
+    });
 
 // ---- Verify ----
 $("btn-verify").addEventListener("click", async () => {
@@ -1132,7 +1214,8 @@ $("btn-verify").addEventListener("click", async () => {
     showRawToggle("verify-raw-toggle", "verify-raw", data.raw_stdout || data.results?.map(r => `${r.db_name}/${r.username}: ${r.raw_stdout}`).join("\n---\n") || "(no rows found)");
     setStatus("status-verify", "ok", `Verification complete for ${usernames.length} user${usernames.length === 1 ? "" : "s"} across ${selectedDbs.length} database${selectedDbs.length === 1 ? "" : "s"}.`);
     markPillDone("verify");
-    setTimeout(resetToEnvironmentLoad, 3600);
+    cancelPendingReset();
+    resetTimerId = setTimeout(resetToEnvironmentLoad, 3600);
   } catch (err) {
     setStatus("status-verify", "err", err.message);
   } finally {
