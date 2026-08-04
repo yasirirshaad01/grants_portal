@@ -107,6 +107,40 @@ def build_grant_statements(usernames, grants, roles):
     return statements
 
 
+def build_revoke_and_drop_user_statements(usernames, grants, roles, existing_privileges=None, existing_roles=None):
+    """Build cleanup SQL for users that already exist before recreating them.
+
+    Try the base privilege revokes first, then revoke any default roles that the
+    user already has, and finally drop the user. The role revoke uses the
+    `revoke role ... from ...` form because the `default role` form is rejected
+    by the Informix instances in this environment.
+    """
+    if isinstance(usernames, str):
+        usernames = [usernames]
+    statements = []
+    existing_privileges = existing_privileges or {}
+    existing_roles = existing_roles or {}
+
+    for username in usernames:
+        safe_user = _escape(username)
+        if "connect" in (grants or []):
+            statements.append(f"revoke connect from {safe_user};")
+        if "resource" in (grants or []):
+            statements.append(f"revoke resource from {safe_user};")
+        if "dba" in (grants or []):
+            statements.append(f"revoke dba from {safe_user};")
+
+        for role in list(existing_roles.get(username, [])) + list(roles or []):
+            if not role:
+                continue
+            safe_role = _escape(role)
+            statements.append(f"revoke {safe_role} from {safe_user};")
+
+        statements.append(f"drop user {safe_user};")
+
+    return statements
+
+
 def generate_strong_password(length=15):
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
     while True:
@@ -170,6 +204,19 @@ def ensure_informix_user_rights_detail(user_id, env_scr, db_name):
                 (user_id, env_scr, db_name),
             )
             conn.commit()
+
+
+def informix_user_password_exists(username):
+    username = (username or "").strip()
+    if not username:
+        return False
+    with get_informix_odbc_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "select 1 from eng_user_rights where user_id = ?",
+            (username,),
+        )
+        return bool(cursor.fetchone())
 
 
 def parse_onstat_summary(output):
@@ -314,6 +361,111 @@ def parse_pipe_separated(output):
             continue
         rows.append(line)
     return rows
+
+
+def parse_user_lookup_usernames(output):
+    """Parse sysusers lookup output and return the actual usernames found.
+
+    dbaccess can produce either tabular rows like "alice C 5" or vertical
+    column/value pairs like "username  alice". This helper extracts the
+    real username values and ignores the query header and other field names.
+    """
+    usernames = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if lowered.startswith(("select", "define", "(1 row", "row(s)")) or "row(s) retrieved" in lowered:
+            continue
+
+        tokens = re.split(r"\s+", line)
+        if not tokens:
+            continue
+
+        first = tokens[0].lower()
+        if first == "username":
+            if len(tokens) > 1 and tokens[1].lower() == "usertype":
+                continue
+            if len(tokens) > 1:
+                usernames.append(tokens[1])
+            continue
+
+        if first in {"usertype", "priority", "defrole"}:
+            continue
+
+        usernames.append(tokens[0])
+
+    return usernames
+
+
+def parse_user_lookup_default_roles(output):
+    """Parse sysusers lookup output and return a mapping of username -> default role(s)."""
+    user_roles = {}
+    current_user = None
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if lowered.startswith(("select", "define", "(1 row", "row(s)")) or "row(s) retrieved" in lowered:
+            continue
+
+        tokens = re.split(r"\s+", line)
+        if not tokens:
+            continue
+
+        first = tokens[0].lower()
+        if first == "username":
+            if len(tokens) > 1 and tokens[1].lower() == "usertype":
+                continue
+            if len(tokens) > 1:
+                current_user = tokens[1]
+                user_roles.setdefault(current_user, [])
+            else:
+                current_user = None
+            continue
+
+        if first == "defrole":
+            role_name = " ".join(tokens[1:]).strip() if len(tokens) > 1 else ""
+            if current_user and role_name:
+                user_roles[current_user] = [role_name]
+            continue
+
+        if first in {"usertype", "priority"}:
+            continue
+
+    return user_roles
+
+
+def parse_user_grant_details(output):
+    """Parse user grant output into a simple {privileges: [...], roles: [...]} structure.
+
+    The expected input is a plain-text dbaccess output that contains either one
+    or more lines like `grant connect`, `grant resource`, `grant dba`, or
+    `default role foo`. The parser is purposely permissive and only extracts
+    the known privilege/role names.
+    """
+    privileges = []
+    roles = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if lowered.startswith(("select", "define", "(1 row", "row(s)")) or "row(s) retrieved" in lowered:
+            continue
+        if lowered.startswith("grant connect"):
+            privileges.append("connect")
+        elif lowered.startswith("grant resource"):
+            privileges.append("resource")
+        elif lowered.startswith("grant dba"):
+            privileges.append("dba")
+        elif lowered.startswith("default role"):
+            role_name = line.split("default role", 1)[1].strip().split()[0]
+            roles.append(role_name)
+
+    return {"privileges": privileges, "roles": roles}
 
 
 def _escape(value):

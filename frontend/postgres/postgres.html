@@ -67,7 +67,7 @@ async function saveAuditRequest(){
   try{
     const res=await fetch(`${API_BASE}/audit/request/`,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Token ${token}`},body:JSON.stringify({rights_type:"postgres",granter_name:granterName,jira_ticket:jiraTicket})});
     const data=await res.json(); if(!res.ok) throw new Error(data.detail||"Failed to save request.");
-    setStatus("status-request","ok",`Saved request ${data.id} at ${formatDateTime()}`);
+    setStatus("status-request","ok",`Saved audit request #${data.id} — ready to preview grants.`);
   }catch(err){setStatus("status-request","err",err.message);}finally{btn.disabled=false;}
 }
 $("btn-save-request").addEventListener("click",async(e)=>{e.preventDefault();await saveAuditRequest();});

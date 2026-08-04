@@ -774,7 +774,7 @@ async function saveAuditRequest(){
     const data = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.detail || 'Failed to save request');
     auditSaved = true;
-    setStatus('status-request','ok', `Saved request ${data.id} at ${formatDateTime()}`);
+    setStatus('status-request','ok', `Saved audit request #${data.id} — ready to preview grants.`);
     setTimeout(() => closeSection('sec-audit'), 2400);
   }catch(err){ setStatus('status-request','err', err.message || String(err)); }
   finally{ btn.disabled = false; }
@@ -1075,6 +1075,7 @@ $("btn-preview").addEventListener("click", async () => {
     }, {});
     const summaryParts = [];
     if (actionSummary.created) summaryParts.push(`${actionSummary.created} user${actionSummary.created === 1 ? "" : "s"} will be created`);
+    if (actionSummary.recreated) summaryParts.push(`${actionSummary.recreated} user${actionSummary.recreated === 1 ? "" : "s"} will be recreated`);
     if (actionSummary.reused) summaryParts.push(`${actionSummary.reused} user${actionSummary.reused === 1 ? "" : "s"} will reuse an existing password`);
     if (actionSummary.existing) summaryParts.push(`${actionSummary.existing} existing user${actionSummary.existing === 1 ? "" : "s"}`);
     const actionText = summaryParts.length ? summaryParts.join(" and ") : "No user action details available.";
@@ -1179,6 +1180,7 @@ $("btn-execute").addEventListener("click", async () => {
 
         const summaryParts = [];
         if (actionSummary.created) summaryParts.push(`${actionSummary.created} user${actionSummary.created === 1 ? "" : "s"} created`);
+        if (actionSummary.recreated) summaryParts.push(`${actionSummary.recreated} user${actionSummary.recreated === 1 ? "" : "s"} recreated`);
         if (actionSummary.reused) summaryParts.push(`${actionSummary.reused} user${actionSummary.reused === 1 ? "" : "s"} reused`);
         if (actionSummary.existing) summaryParts.push(`${actionSummary.existing} existing user${actionSummary.existing === 1 ? "" : "s"}`);
         const actionText = summaryParts.length ? summaryParts.join(" and ") : "No user action details available.";

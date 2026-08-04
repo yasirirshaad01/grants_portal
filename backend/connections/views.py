@@ -67,8 +67,25 @@ def _existing_informix_users(session, manager, db_name, usernames):
     sql = dbops.build_user_lookup_sql(usernames)
     cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db_name, sql))
     result = manager.run(cmd)
-    rows = dbops.parse_pipe_separated(result["stdout"])
-    return {row.split()[0] for row in rows if row}
+    rows = dbops.parse_user_lookup_usernames(result["stdout"])
+    return {row for row in rows if row}
+
+
+def _discover_existing_grants(session, manager, db_name, usernames):
+    if not usernames:
+        return {}, {}
+    discovered_privileges = {username: [] for username in usernames}
+    discovered_roles = {username: [] for username in usernames}
+
+    for username in usernames:
+        lookup_sql = f"select username, usertype, priority, defrole from sysusers where username = '{dbops._escape(username)}';"
+        lookup_cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db_name, lookup_sql))
+        lookup_result = manager.run(lookup_cmd)
+        default_roles = dbops.parse_user_lookup_default_roles(lookup_result["stdout"])
+        if username in default_roles:
+            discovered_roles[username] = default_roles[username]
+
+    return discovered_privileges, discovered_roles
 
 
 class JumpServerConnectView(APIView):
@@ -424,20 +441,33 @@ class GrantPreviewView(APIView):
             return Response({"detail": "No grants or roles selected"}, status=status.HTTP_400_BAD_REQUEST)
 
         created_user_statements = []
+        cleanup_user_statements = []
+        user_actions = []
         if session_id and db_names:
             session, manager = _get_owned_session(request, session_id)
             if session and manager and session.env_script:
                 existing_users = _existing_informix_users(session, manager, db_names[0], usernames)
-                missing_users = [u for u in usernames if u not in existing_users]
+                recreate_usernames = [u for u in usernames if u in existing_users]
+                cleanup_user_statements = dbops.build_revoke_and_drop_user_statements(recreate_usernames, grants, roles)
                 created_user_statements = [
                     dbops.build_create_user_statement(username, _get_saved_user_password(username))
-                    for username in missing_users
+                    for username in usernames
                 ]
 
-        combined = created_user_statements + statements if created_user_statements else statements
+                for username in usernames:
+                    if username in recreate_usernames:
+                        user_actions.append({"username": username, "status": "recreated"})
+                    else:
+                        user_actions.append({"username": username, "status": "created"})
+
+        combined = cleanup_user_statements + created_user_statements + statements if (cleanup_user_statements or created_user_statements) else statements
         response = {"statements": combined}
         if created_user_statements:
             response["created_user_statements"] = created_user_statements
+        if cleanup_user_statements:
+            response["cleanup_user_statements"] = cleanup_user_statements
+        if user_actions:
+            response["user_actions"] = user_actions
         return Response(response)
 
 
@@ -477,27 +507,79 @@ class GrantExecuteView(APIView):
         ordered = connects + others
         sql_block = "\n".join(ordered)
 
-        user_passwords = {
-            username: _get_saved_user_password(username)
-            for username in usernames
-        }
-
         results = []
         overall_ok = True
+        aggregated_user_actions = []
         for db in db_names:
             existing_users = _existing_informix_users(session, manager, db, usernames)
-            create_user_statements = []
+
+            # Ensure we have passwords and whether they existed in eng_user_rights
+            passwords = {}
+            password_existed = {}
             for username in usernames:
-                if username not in existing_users:
-                    create_user_statements.append(
-                        dbops.build_create_user_statement(username, user_passwords[username])
-                    )
-            ordered = create_user_statements + connects + others
+                password_existed[username] = dbops.informix_user_password_exists(username)
+                passwords[username] = _get_saved_user_password(username)
+
+            recreate_usernames = [u for u in usernames if u in existing_users]
+            existing_privileges, existing_roles = ({}, {})
+            if recreate_usernames:
+                existing_privileges, existing_roles = _discover_existing_grants(session, manager, db, recreate_usernames)
+            create_user_statements = [
+                dbops.build_create_user_statement(username, passwords[username])
+                for username in usernames
+            ]
+            cleanup_statements = dbops.build_revoke_and_drop_user_statements(
+                recreate_usernames,
+                grants,
+                roles,
+                existing_privileges=existing_privileges,
+                existing_roles=existing_roles,
+            )
+            ordered = cleanup_statements + create_user_statements + connects + others
             sql_block = "\n".join(ordered)
 
             result = manager.run(dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db, sql_block)))
             ok = result["exit_code"] == 0
             overall_ok = overall_ok and ok
+
+            # Prepare user action records for this instance
+            user_actions = []
+            for username in usernames:
+                if username in recreate_usernames:
+                    status_flag = "recreated"
+                else:
+                    status_flag = "created"
+                user_actions.append({"username": username, "status": status_flag})
+                aggregated_user_actions.append({"username": username, "status": status_flag})
+
+            # If we created users, send credential file and email via mailx on the remote host
+            email_results = []
+            if ok:
+                for username in usernames:
+                    file_path = f"/tmp/{username}_creds.txt"
+                    pwd = passwords[username]
+                    # write credentials using printf (avoid heredoc pitfalls) and tighten perms
+                    write_cmd = (
+                        f"printf 'user_id: %s\\npassword: %s\\n' \"{username}\" \"{pwd}\" > {file_path} && chmod 600 {file_path}"
+                    )
+                    write_result = manager.run(dbops.build_silent_env_prefixed_command(session.env_script, write_cmd))
+                    write_ok = write_result.get("exit_code") == 0
+
+                    # send email with the file attached; run as a separate command so we can detect mailx exit status
+                    mail_cmd = f"echo 'Please find credentials attached' | /usr/bin/mailx -s 'user_and_password_details' -a {file_path} {username}@i2cinc.com"
+                    mail_result = manager.run(dbops.build_silent_env_prefixed_command(session.env_script, mail_cmd))
+                    email_sent = mail_result.get("exit_code") == 0
+
+                    email_results.append({
+                        "username": username,
+                        "file_path": file_path,
+                        "email_sent": email_sent,
+                        "write_stdout": write_result.get("stdout"),
+                        "write_stderr": write_result.get("stderr"),
+                        "mail_stdout": mail_result.get("stdout"),
+                        "mail_stderr": mail_result.get("stderr"),
+                    })
+
             results.append({
                 "db_name": db,
                 "exit_code": result["exit_code"],
@@ -505,7 +587,11 @@ class GrantExecuteView(APIView):
                 "stderr": result["stderr"],
                 "ok": ok,
                 "created_users": create_user_statements,
+                "cleanup_statements": cleanup_statements,
+                "recreated_users": recreate_usernames,
                 "sql": sql_block,
+                "user_actions": user_actions,
+                "email_results": email_results,
             })
 
             for username in usernames:
@@ -530,6 +616,7 @@ class GrantExecuteView(APIView):
             "executed_sql": sql_block,
             "results": results,
             "debug": results,
+            "user_actions": aggregated_user_actions,
             "detail": detail,
         }
         return Response(payload, status=status.HTTP_200_OK if overall_ok else status.HTTP_400_BAD_REQUEST)
