@@ -137,6 +137,7 @@ def build_revoke_and_drop_user_statements(usernames, grants, roles, existing_pri
             statements.append(f"revoke {safe_role} from {safe_user};")
 
         statements.append(f"drop user {safe_user};")
+        statements.append(f"-- ignore missing user errors")
 
     return statements
 
