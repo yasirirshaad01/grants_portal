@@ -115,7 +115,7 @@
 <script>
 function $(id){ return document.getElementById(id); }
 
-const API_BASE = sessionStorage.getItem("gp_api_base") || "http://127.0.0.1:8000/api";
+const API_BASE = sessionStorage.getItem("gp_api_base") || `${window.location.protocol}//${window.location.hostname}:8000/api`;
 const token = sessionStorage.getItem("gp_token");
 const sessionId = sessionStorage.getItem("gp_session_id");
 

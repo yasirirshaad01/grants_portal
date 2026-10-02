@@ -4,6 +4,7 @@ from .views import (
     JumpServerConnectView,
     DirectServerConnectView,
     HopView,
+    HopBackView,
     DisconnectView,
     GrantRequestCreateView,
     EnvironmentLoadView,
@@ -20,6 +21,7 @@ urlpatterns = [
     path("connect/jump/", JumpServerConnectView.as_view(), name="connect-jump"),
     path("connect/direct/", DirectServerConnectView.as_view(), name="connect-direct"),
     path("connect/hop/", HopView.as_view(), name="connect-hop"),
+    path("connect/hop-back/", HopBackView.as_view(), name="connect-hop-back"),
     path("disconnect/", DisconnectView.as_view(), name="disconnect"),
     path("audit/request/", GrantRequestCreateView.as_view(), name="grant-request-create"),
 

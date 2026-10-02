@@ -15,6 +15,7 @@ html, body { height: 100%; margin: 0; font-family: var(--mono); background: radi
 body { padding: 24px; display: flex; justify-content: center; }
 
 .wrap { max-width: 1120px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.bottom-spacer { height: 60px; flex-shrink: 0; }
 .topbar {
   display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 14px 18px; border: 1px solid var(--line); border-radius: 14px; background: rgba(11, 17, 14, 0.95);
@@ -140,7 +141,7 @@ pre.out.open { display: block; }
 .status.pending { color: var(--info); border-color: #27566f; }
 
 .hop-panel { display: none; margin-top: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(17, 24, 20, 0.9); max-width: 640px; width: 100%; }
-.hop-panel.active, .hop-panel.open { display: block; }
+.hop-panel.active, .hop-panel.open { display: flex; flex-direction: column; gap: 14px; }
 .hop-panel .field { max-width: 100%; width: 100%; }
 .hop-panel .field label { white-space: normal; line-height: 1.4; }
 .hop-panel .field input { min-width: 0; }

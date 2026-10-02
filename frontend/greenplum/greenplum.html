@@ -52,7 +52,7 @@
 </div>
 <script>
 const token = sessionStorage.getItem("gp_token");
-const API_BASE = sessionStorage.getItem("gp_api_base") || "http://127.0.0.1:8000/api";
+const API_BASE = sessionStorage.getItem("gp_api_base") || `${window.location.protocol}//${window.location.hostname}:8000/api`;
 const $ = (id) => document.getElementById(id);
 function formatDateTime(){ return new Date().toISOString().slice(0,19).replace('T',' '); }
 function setStatus(id, kind, text){ const el=$(id); el.className = `status show ${kind}`; el.textContent = text; }

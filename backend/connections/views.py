@@ -10,23 +10,27 @@ endpoints once this page is working - see the "Next steps" note in the
 project README.
 """
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
 from .serializers import JumpConnectSerializer, DirectConnectSerializer, HopSerializer, GrantRequestSerializer
 from .ssh_manager import SSHManager, SSHConnectionError
-from .models import SSHSession, AuditLog, GrantRequest
+from .models import SSHSession, AuditLog
 from . import dbops
-import re
 
 # Maps SSHSession.id (str) -> live SSHManager. This is process-local.
 # Fine for a single `runserver` / single-worker deployment; for anything
 # multi-worker, back this with Redis and make sure a given session's
 # requests always land on the worker that owns the Paramiko connection.
 ACTIVE_SESSIONS = {}
+
+# Maps SSHSession.id (str) -> list of previous current_host values, in hop
+# order, so HopBackView can undo a mistaken hop without a full reconnect.
+# Same process-local caveat as ACTIVE_SESSIONS.
+HOST_HISTORY = {}
 
 SSH_PORT = 22
 
@@ -65,7 +69,7 @@ def _existing_informix_users(session, manager, db_name, usernames):
     if not usernames:
         return set()
     sql = dbops.build_user_lookup_sql(usernames)
-    cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db_name, sql))
+    cmd = dbops.build_session_dbaccess_command(session.env_script, db_name, sql)
     result = manager.run(cmd)
     rows = dbops.parse_user_lookup_usernames(result["stdout"])
     return {row for row in rows if row}
@@ -79,7 +83,7 @@ def _discover_existing_grants(session, manager, db_name, usernames):
 
     for username in usernames:
         lookup_sql = f"select username, usertype, priority, defrole from sysusers where username = '{dbops._escape(username)}';"
-        lookup_cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db_name, lookup_sql))
+        lookup_cmd = dbops.build_session_dbaccess_command(session.env_script, db_name, lookup_sql)
         lookup_result = manager.run(lookup_cmd)
         default_roles = dbops.parse_user_lookup_default_roles(lookup_result["stdout"])
         if username in default_roles:
@@ -209,15 +213,57 @@ class HopView(APIView):
             )
             return Response({"detail": "Could not hop to target host", "stderr": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        HOST_HISTORY.setdefault(str(session.id), []).append(session.current_host)
         session.current_host = data.get("host")
-        session.save(update_fields=["current_host"]) 
+        session.save(update_fields=["current_host"])
 
         AuditLog.objects.create(
             session=session, portal_user=request.user, action="hop_success",
             detail=f"host={data.get('host')} mode={data.get('mode')}",
         )
 
-        return Response({"status": "hopped", "current_host": data.get("host")})
+        return Response({
+            "status": "hopped",
+            "current_host": data.get("host"),
+            "can_go_back": manager.can_go_back(),
+        })
+
+
+class HopBackView(APIView):
+    """Undo the most recent hop - closes the current (mistaken) host's SSH
+    connection and reactivates whichever host was active before it, without
+    a full disconnect/reconnect through the jump server."""
+    def post(self, request):
+        session_id = request.data.get("session_id")
+        session, manager = _get_owned_session(request, session_id)
+        if not session:
+            return Response({"detail": "Unknown or inactive session"}, status=status.HTTP_404_NOT_FOUND)
+        if not manager:
+            return Response({"detail": "SSH session expired, please reconnect"}, status=status.HTTP_409_CONFLICT)
+
+        history = HOST_HISTORY.get(str(session.id)) or []
+        if not history:
+            return Response({"detail": "No previous host to go back to"}, status=status.HTTP_409_CONFLICT)
+
+        try:
+            manager.go_back()
+        except SSHConnectionError as exc:
+            return Response({"detail": "Could not go back", "stderr": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        previous_host = history.pop()
+        session.current_host = previous_host
+        session.save(update_fields=["current_host"])
+
+        AuditLog.objects.create(
+            session=session, portal_user=request.user, action="hop_back_success",
+            detail=f"host={previous_host}",
+        )
+
+        return Response({
+            "status": "hopped_back",
+            "current_host": previous_host,
+            "can_go_back": bool(history),
+        })
 
 
 class DisconnectView(APIView):
@@ -226,6 +272,7 @@ class DisconnectView(APIView):
         manager = ACTIVE_SESSIONS.pop(session_id, None)
         if manager:
             manager.close()
+        HOST_HISTORY.pop(session_id, None)
         SSHSession.objects.filter(id=session_id, portal_user=request.user).update(is_active=False)
         return Response({"status": "disconnected"})
 
@@ -234,16 +281,25 @@ class GrantRequestCreateView(APIView):
     def post(self, request):
         serializer = GrantRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        request_obj = serializer.save(portal_user=request.user)
+        data = serializer.validated_data
+        saved = dbops.save_grant_request(
+            rights_type=data["rights_type"],
+            granter_name=data["granter_name"],
+            jira_ticket=data["jira_ticket"],
+            portal_user=request.user.username,
+        )
         return Response({
             "status": "saved",
-            "id": request_obj.id,
-            "requested_at": request_obj.requested_at,
+            "id": saved["id"],
+            "requested_at": saved["requested_at"],
         })
 
 
 # ----------------------------------------------------------------------
-# Step 6: load the Informix environment (". /mcp_qasi")
+# Step 6: connect to the Informix instance - either directly (known
+# instances from mcp_instances, no SSH sourcing needed) or by sourcing an
+# environment script by hand (". /mcp_qasi", for instances not in that
+# table, which still have to be reached from the right host)
 # ----------------------------------------------------------------------
 class EnvironmentLoadView(APIView):
     def post(self, request):
@@ -258,6 +314,50 @@ class EnvironmentLoadView(APIView):
         if not manager:
             return Response({"detail": "SSH session expired, please reconnect"}, status=status.HTTP_409_CONFLICT)
 
+        instance_name = dbops.extract_instance_name(env_script)
+        host_str = None
+        if instance_name and session.current_host == settings.INFORMIX_MCP_INSTANCES_HOST:
+            # mcp_instances only applies on the host where db_monitoring/
+            # mcp00 actually live - its bootstrap script won't exist to
+            # source on any other host, so don't even try the direct-
+            # connect shortcut there; fall straight through to legacy
+            # sourcing, which is the only thing that can work.
+            host_str = dbops.fetch_instance_host(instance_name)
+
+        if host_str:
+            # Known instance: connect straight to it over the network - no
+            # dependency on which physical host we're SSH'd into right now.
+            # `dbaccess` still needs *some* environment sourced first just to
+            # be on PATH at all, hence build_direct_probe_command rather than
+            # a bare dbaccess call.
+            result = manager.run(dbops.build_direct_probe_command(host_str))
+
+            if result["exit_code"] != 0:
+                AuditLog.objects.create(
+                    session=session, portal_user=request.user, action="env_load_failed",
+                    detail=env_script, status="failed", result_summary=(result["stdout"] + result["stderr"])[:2000],
+                )
+                return Response({
+                    "detail": f"Could not connect to {instance_name} ({host_str})",
+                    "stderr": result["stderr"],
+                    "raw_stdout": result["stdout"],
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            session.env_script = f"@{host_str}"
+            session.save(update_fields=["env_script"])
+
+            AuditLog.objects.create(
+                session=session, portal_user=request.user, action="env_load_success",
+                detail=env_script, result_summary=f"direct connect via {host_str}",
+            )
+
+            return Response({
+                "status": "loaded",
+                "instance": {"status": "connected", "mode": "direct", "host_str": host_str},
+                "raw_stdout": result["stdout"],
+            })
+
+        # Fallback: not a known instance - source it by hand, exactly as before.
         result = manager.run(dbops.build_env_prefixed_command(env_script, "onstat -"))
         instance = dbops.parse_onstat_summary(result["stdout"])
 
@@ -293,44 +393,78 @@ class EnvironmentLoadView(APIView):
 
 
 class EnvironmentListView(APIView):
-    """List available environment scripts under /mcp* and show the
-    associated IDSNETSERVICE port where available.
+    """List Informix instances available on the currently connected host.
 
-    Returns JSON: { envs: [{name, port, raw_stdout}], raw_ls }
+    - On settings.INFORMIX_MCP_INSTANCES_HOST (where db_monitoring/mcp00
+      live): every known instance from db_monitoring.mcp_instances, across
+      every server - not just this one - with port/IP/databases. One ODBC
+      query, no SSH needed. mcp_instances has one row per database within
+      an instance, so rows are grouped by env_scr into one entry per
+      instance, carrying the full list of its databases alongside.
+    - On any other host: mcp_instances doesn't apply there (its bootstrap
+      script and sqlhosts setup are local to the host above), so this falls
+      back to the original approach - `ls -1d /mcp*` on the connected host
+      to find locally symlinked env scripts, then sources each one and
+      reads back its IDSNETSERVICE port. One SSH round trip per instance,
+      but it's the only way to discover instances that were never
+      registered in mcp_instances at all.
+
+    Returns JSON: { envs: [{name, port, ip, host, databases, description,
+    active, is_monitored}] }
     """
     def get(self, request):
         session_id = request.query_params.get("session_id")
         session, manager = _get_owned_session(request, session_id)
         if not session:
             return Response({"detail": "Unknown or inactive session"}, status=status.HTTP_404_NOT_FOUND)
+
+        if session.current_host == settings.INFORMIX_MCP_INSTANCES_HOST:
+            instances = [row for row in dbops.fetch_mcp_instances() if row.get("env_scr")]
+            envs_by_name = {}
+            order = []
+            for row in instances:
+                name = row["env_scr"]
+                if name not in envs_by_name:
+                    order.append(name)
+                    envs_by_name[name] = {
+                        "name": name,
+                        "port": row.get("portno") or None,
+                        "ip": row.get("ip") or None,
+                        "host": row.get("host_str") or None,
+                        "description": row.get("db_desc") or None,
+                        "active": row.get("active") or None,
+                        "is_monitored": row.get("is_monitored") or None,
+                        "databases": [],
+                    }
+                dbname = row.get("dbname")
+                if dbname and dbname not in envs_by_name[name]["databases"]:
+                    envs_by_name[name]["databases"].append(dbname)
+
+            envs = [envs_by_name[name] for name in order]
+            return Response({"envs": envs})
+
+        # Fallback: not the mcp_instances host - discover instances the
+        # original way, from what's actually symlinked on this host.
         if not manager:
             return Response({"detail": "SSH session expired, please reconnect"}, status=status.HTTP_409_CONFLICT)
 
-        # List /mcp* entries (use -d so we get the symlink names, not their contents)
         list_cmd = "ls -1d /mcp* 2>/dev/null || true"
         ls_result = manager.run(list_cmd)
         entries = [l.strip() for l in ls_result["stdout"].splitlines() if l.strip()]
 
         envs = []
         for entry in entries:
-            # basename, e.g. /mcp_devmi -> mcp_devmi
             name = entry.rsplit("/", 1)[-1]
-            # Try sourcing the env and echoing IDSNETSERVICE to extract port
-            cmd = dbops.build_silent_env_prefixed_command(f". /{name}", "echo $IDSNETSERVICE")
-            res = manager.run(cmd)
-            raw = (res.get("stdout") or "").strip()
-            port = None
-            if raw:
-                m = re.search(r"-(\d{2,5})$", raw.strip())
-                if m:
-                    port = m.group(1)
-                else:
-                    parts = raw.strip().split("-")
-                    if parts and parts[-1].isdigit():
-                        port = parts[-1]
-            envs.append({"name": name, "port": port, "raw_stdout": raw})
+            res = manager.run(dbops.build_legacy_instance_probe_command(name))
+            probe = dbops.parse_legacy_instance_probe_output(res.get("stdout") or "")
+            envs.append({
+                "name": name,
+                "port": probe["port"],
+                "ip": session.current_host,
+                "databases": probe["databases"],
+            })
 
-        return Response({"envs": envs, "raw_ls": ls_result["stdout"]})
+        return Response({"envs": envs})
 
 
 # ----------------------------------------------------------------------
@@ -346,7 +480,7 @@ class DatabaseListView(APIView):
             return Response({"detail": "Load an environment first"}, status=status.HTTP_409_CONFLICT)
 
         sql = dbops.build_list_databases_sql()
-        cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command("sysmaster", sql))
+        cmd = dbops.build_session_dbaccess_command(session.env_script, "sysmaster", sql)
         result = manager.run(cmd)
 
         return Response({
@@ -369,7 +503,7 @@ class RoleListView(APIView):
             return Response({"detail": "Load an environment first"}, status=status.HTTP_409_CONFLICT)
 
         sql = dbops.build_list_roles_sql()
-        cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db_name, sql))
+        cmd = dbops.build_session_dbaccess_command(session.env_script, db_name, sql)
         result = manager.run(cmd)
 
         return Response({
@@ -396,7 +530,7 @@ class UserLookupView(APIView):
             return Response({"detail": "username is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         sql = dbops.build_user_lookup_sql(usernames)
-        cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db_name, sql))
+        cmd = dbops.build_session_dbaccess_command(session.env_script, db_name, sql)
         result = manager.run(cmd)
         rows = dbops.parse_pipe_separated(result["stdout"])
         found_usernames = {row.split()[0] for row in rows if row}
@@ -509,7 +643,14 @@ class GrantExecuteView(APIView):
 
         results = []
         overall_ok = True
-        aggregated_user_actions = []
+        aggregated_user_actions = {}
+        # Informix user accounts (CREATE USER ... WITH PASSWORD) are
+        # instance-wide, not per-database - once created against the first
+        # selected database, every other database on that same instance
+        # already has it. Without tracking this, the second database's
+        # CREATE USER fails with "already exists" even though its grants
+        # still go through fine.
+        created_this_call = set()
         for db in db_names:
             existing_users = _existing_informix_users(session, manager, db, usernames)
 
@@ -520,13 +661,14 @@ class GrantExecuteView(APIView):
                 password_existed[username] = dbops.informix_user_password_exists(username)
                 passwords[username] = _get_saved_user_password(username)
 
-            recreate_usernames = [u for u in usernames if u in existing_users]
+            recreate_usernames = [u for u in usernames if u in existing_users and u not in created_this_call]
             existing_privileges, existing_roles = ({}, {})
             if recreate_usernames:
                 existing_privileges, existing_roles = _discover_existing_grants(session, manager, db, recreate_usernames)
+            new_usernames = [u for u in usernames if u not in created_this_call]
             create_user_statements = [
                 dbops.build_create_user_statement(username, passwords[username])
-                for username in usernames
+                for username in new_usernames
             ]
             cleanup_statements = dbops.build_revoke_and_drop_user_statements(
                 recreate_usernames,
@@ -538,8 +680,11 @@ class GrantExecuteView(APIView):
             ordered = cleanup_statements + create_user_statements + connects + others
             sql_block = "\n".join(ordered)
 
-            result = manager.run(dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db, sql_block)))
-            ok = result["exit_code"] == 0
+            result = manager.run(dbops.build_session_dbaccess_command(session.env_script, db, sql_block))
+            # dbaccess returns one exit code for the whole batch - a benign
+            # error (e.g. "already exists") on one statement shouldn't mask
+            # that the real grants in the same batch succeeded.
+            ok = result["exit_code"] == 0 or dbops.dbaccess_output_has_only_benign_errors(result["stdout"])
             overall_ok = overall_ok and ok
 
             # Prepare user action records for this instance
@@ -547,37 +692,50 @@ class GrantExecuteView(APIView):
             for username in usernames:
                 if username in recreate_usernames:
                     status_flag = "recreated"
+                elif username in created_this_call:
+                    status_flag = "granted"
                 else:
                     status_flag = "created"
                 user_actions.append({"username": username, "status": status_flag})
-                aggregated_user_actions.append({"username": username, "status": status_flag})
+                # keep only the first, most informative status per username
+                # across databases in this call, instead of counting the
+                # same user as "created" once per database
+                aggregated_user_actions.setdefault(username, {"username": username, "status": status_flag})
 
-            # If we created users, send credential file and email via mailx on the remote host
+            created_this_call.update(usernames)
+
+            # If we created/granted users, append them to the one running
+            # credentials log on the remote host and email them - but only
+            # if this exact password hasn't already been emailed to them
+            # before (mailx on the remote host is no longer available, and
+            # was also the source of users getting the same unchanged
+            # password emailed repeatedly). There's no more per-user
+            # /tmp/{username}_creds.txt file - everything goes into the one
+            # tracked log now, see dbops.PASSWORD_LOG_FILE.
             email_results = []
             if ok:
                 for username in usernames:
-                    file_path = f"/tmp/{username}_creds.txt"
                     pwd = passwords[username]
-                    # write credentials using printf (avoid heredoc pitfalls) and tighten perms
-                    write_cmd = (
-                        f"printf 'user_id: %s\\npassword: %s\\n' \"{username}\" \"{pwd}\" > {file_path} && chmod 600 {file_path}"
-                    )
-                    write_result = manager.run(dbops.build_silent_env_prefixed_command(session.env_script, write_cmd))
-                    write_ok = write_result.get("exit_code") == 0
 
-                    # send email with the file attached; run as a separate command so we can detect mailx exit status
-                    mail_cmd = f"echo 'Please find credentials attached' | /usr/bin/mailx -s 'user_and_password_details' -a {file_path} {username}@i2cinc.com"
-                    mail_result = manager.run(dbops.build_silent_env_prefixed_command(session.env_script, mail_cmd))
-                    email_sent = mail_result.get("exit_code") == 0
+                    try:
+                        mail_outcome = dbops.maybe_send_credentials_email(username, pwd)
+                        email_sent = mail_outcome["sent"]
+                        email_note = mail_outcome["reason"]
+                    except Exception as exc:
+                        email_sent = False
+                        email_note = f"email send failed: {exc}"
+
+                    log_cmd = dbops.build_password_log_command(username, pwd)
+                    log_result = manager.run(dbops.build_silent_env_prefixed_command(session.env_script, log_cmd))
+                    password_logged = log_result.get("exit_code") == 0
 
                     email_results.append({
                         "username": username,
-                        "file_path": file_path,
+                        "file_path": dbops.PASSWORD_LOG_FILE,
                         "email_sent": email_sent,
-                        "write_stdout": write_result.get("stdout"),
-                        "write_stderr": write_result.get("stderr"),
-                        "mail_stdout": mail_result.get("stdout"),
-                        "mail_stderr": mail_result.get("stderr"),
+                        "email_note": email_note,
+                        "password_logged": password_logged,
+                        "password_log_stderr": log_result.get("stderr"),
                     })
 
             results.append({
@@ -616,7 +774,7 @@ class GrantExecuteView(APIView):
             "executed_sql": sql_block,
             "results": results,
             "debug": results,
-            "user_actions": aggregated_user_actions,
+            "user_actions": list(aggregated_user_actions.values()),
             "detail": detail,
         }
         return Response(payload, status=status.HTTP_200_OK if overall_ok else status.HTTP_400_BAD_REQUEST)
@@ -652,7 +810,7 @@ class GrantVerifyView(APIView):
         combined_stdout = []
         for db in db_names:
             sql = dbops.build_user_lookup_sql(usernames)
-            cmd = dbops.build_silent_env_prefixed_command(session.env_script, dbops.build_dbaccess_sql_command(db, sql))
+            cmd = dbops.build_session_dbaccess_command(session.env_script, db, sql)
             result = manager.run(cmd)
             rows = dbops.parse_pipe_separated(result["stdout"])
             combined_stdout.append(result["stdout"])

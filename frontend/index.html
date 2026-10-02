@@ -92,7 +92,10 @@
 </script>
 <script>
   // --- Sign-in + connect handling for index page ---
-  const API_BASE = "http://127.0.0.1:8000/api";
+  // Derived from the current page's own host, not hardcoded, so the same
+  // files work unchanged whether opened on localhost during development or
+  // on the shared deployed server - no per-deployment editing needed.
+  const API_BASE = `${window.location.protocol}//${window.location.hostname}:8000/api`;
   const $ = (id) => document.getElementById(id);
 
   function setPortalStatus(kind, text){ const el = $('portal-status'); if(!el) return; el.className = 'status show '+kind; el.textContent = text; }

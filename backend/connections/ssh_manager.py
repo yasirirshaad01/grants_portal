@@ -22,6 +22,7 @@ class SSHManager:
     def __init__(self):
         self._transport = None   # active paramiko.Transport for the current hop
         self._client = None      # paramiko.SSHClient wrapping _transport, for exec_command
+        self._transport_stack = []  # transports for every earlier hop, so go_back() can undo one
 
     # ------------------------------------------------------------------
     # Hop 1: jump server, keyboard-interactive (First Factor / Second Factor)
@@ -109,7 +110,7 @@ class SSHManager:
 
         # Keep the previous transport around so the channel it owns stays
         # open (closing it would kill the tunnel underneath next_transport).
-        self._parent_transport = self._transport
+        self._transport_stack.append(self._transport)
         self._set_active(next_transport)
         return True
 
@@ -158,7 +159,7 @@ class SSHManager:
             next_transport.close()
             raise SSHConnectionError(f"Trusted hop to {host} failed authentication")
 
-        self._parent_transport = self._transport
+        self._transport_stack.append(self._transport)
         self._set_active(next_transport)
         return True
 
@@ -203,7 +204,7 @@ class SSHManager:
             next_transport.close()
             raise SSHConnectionError(f"Authentication to {host} failed")
 
-        self._parent_transport = self._transport
+        self._transport_stack.append(self._transport)
         self._set_active(next_transport)
         return True
 
@@ -229,8 +230,29 @@ class SSHManager:
     def close(self):
         if self._client:
             self._client.close()
-        if getattr(self, "_parent_transport", None):
-            self._parent_transport.close()
+        for transport in reversed(self._transport_stack):
+            try:
+                transport.close()
+            except Exception:
+                pass
+        self._transport_stack = []
+
+    # ------------------------------------------------------------------
+    def can_go_back(self):
+        """Whether there's an earlier hop to undo."""
+        return bool(self._transport_stack)
+
+    def go_back(self):
+        """Undo the most recent hop: close the current (innermost) transport
+        and reactivate whichever one was active immediately before it.
+        Everything further back in the chain stays open and untouched."""
+        if not self._transport_stack:
+            raise SSHConnectionError("No previous host to go back to")
+        previous_transport = self._transport_stack.pop()
+        if self._client:
+            self._client.close()
+        self._set_active(previous_transport)
+        return True
 
     # ------------------------------------------------------------------
     def _set_active(self, transport):
